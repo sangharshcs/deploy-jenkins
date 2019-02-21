@@ -3,6 +3,7 @@ FROM ubuntu:16.04
 RUN apt-get update
 RUN apt-get install -y python lsb-core docker.io
 RUN apt-get install -y sudo
+RUN apt-get install -y wget openjdk-8-jdk
 
 ARG user=jenkins
 ARG group=jenkins
