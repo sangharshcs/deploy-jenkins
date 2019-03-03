@@ -2,7 +2,7 @@ CURR_DIR = $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 include ${CURR_DIR}/../env.mk
 
 build:
-	docker build -t ${MASTER_IMAGE} .
+	docker build --no-cache -t ${MASTER_IMAGE} .
 
 push:
 	docker push ${MASTER_IMAGE}
