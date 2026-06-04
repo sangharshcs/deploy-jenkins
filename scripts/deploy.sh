@@ -39,7 +39,7 @@ docker stack rm "${CONTROLLER_SERVICE}" >/dev/null 2>&1 || true
 docker service rm "${WORKER_SERVICE}" >/dev/null 2>&1 || true
 for _ in {1..30}; do
   running="$(docker stack ps "${CONTROLLER_SERVICE}" \
-    --filter desired-state=running --format '{{.ID}}' 2>/dev/null | wc -l)"
+    --filter desired-state=running --format '{{.ID}}' 2>/dev/null | wc -l || true)"
   if [[ "${running}" -eq 0 ]]; then
     break
   fi
