@@ -86,7 +86,7 @@ This repository includes `.github/workflows/docker-images.yml` to:
 
 - build controller/worker images,
 - run a container-level smoke test (controller login + worker auto-connect),
-- push images to Docker Hub for `main`/`master` and `v*` tags.
+- push images to Docker Hub for `main` and `v*` tags.
 
 Configure these repository secrets:
 
