@@ -1,12 +1,12 @@
 version: '3.1'
 services:
  main:
-  image: @MASTER_IMAGE@
+  image: @CONTROLLER_IMAGE@
   ports:
    - ${UI_PORT:-8080}:8080
    - ${AGENTS_PORT:-50000}:50000
   volumes:
-   - @MASTER_ROOT@:/var/jenkins_home
+   - @CONTROLLER_ROOT@:/var/jenkins_home
   secrets:
    - jenkins-user
    - jenkins-pass
