@@ -30,6 +30,7 @@ SWARM_ARGS=(
   -url "${JENKINS_URL}"
   -username "${J_USERNAME}"
   -passwordFile "${PASS_SECRET_FILE}"
+  -name "worker-${HOSTNAME}"
   -fsroot "${WORKER_ROOT}"
   -executors "${SWARM_EXECUTORS}"
   -labels "${SWARM_LABELS}"

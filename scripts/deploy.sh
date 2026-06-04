@@ -15,9 +15,17 @@ if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
   "${ROOT_DIR}/scripts/build.sh"
 fi
 
-echo $DEPLOY_TAG
-echo $CONTROLLER_IMAGE
-echo $WORKER_IMAGE
+echo "${DEPLOY_TAG}"
+echo "${CONTROLLER_IMAGE}"
+echo "${WORKER_IMAGE}"
+
+DOCKER_SOCK_MOUNT="${DOCKER_SOCK_MOUNT:-1}"
+WORKER_MOUNTS=(
+  --mount "type=bind,source=${WORKER_ROOT},target=${WORKER_ROOT}"
+)
+if [[ "${DOCKER_SOCK_MOUNT}" == "1" ]]; then
+  WORKER_MOUNTS+=(--mount "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock")
+fi
 
 mkdir -p "${CONTROLLER_ROOT}" "${WORKER_ROOT}"
 chmod 750 "${CONTROLLER_ROOT}" "${WORKER_ROOT}"
@@ -29,7 +37,14 @@ render_controller_compose
 
 docker stack rm "${CONTROLLER_SERVICE}" >/dev/null 2>&1 || true
 docker service rm "${WORKER_SERVICE}" >/dev/null 2>&1 || true
-sleep 8
+for _ in {1..30}; do
+  running="$(docker stack ps "${CONTROLLER_SERVICE}" \
+    --filter desired-state=running --format '{{.ID}}' 2>/dev/null | wc -l)"
+  if [[ "${running}" -eq 0 ]]; then
+    break
+  fi
+  sleep 2
+done
 
 docker stack deploy --resolve-image never -c "${CONTROLLER_RENDERED}" "${CONTROLLER_SERVICE}"
 
@@ -48,21 +63,27 @@ docker service create \
   -e "JENKINS_CONTROLLER_URL=${JENKINS_CONTROLLER_URL}" \
   --secret source=jenkins-user,target=jenkins-user \
   --secret source=jenkins-pass,target=jenkins-pass \
-  --mount "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock" \
-  --mount "type=bind,source=${WORKER_ROOT},target=${WORKER_ROOT}" \
+  "${WORKER_MOUNTS[@]}" \
   "${WORKER_IMAGE}" >/dev/null
 
 sleep 5
 
+curl_cfg="$(mktemp)"
+trap 'rm -f "${curl_cfg}"' EXIT
+chmod 600 "${curl_cfg}"
+cat > "${curl_cfg}" <<EOF
+user = "${JENKINS_USER}:${JENKINS_PASS}"
+EOF
+
 echo "Checking worker logs for startup failures..."
 for _ in {1..24}; do
-  if docker service logs --tail 100 "${WORKER_SERVICE}" 2>&1 | rg -q "RetryException|HTTP response code: 403|SEVERE:"; then
+  if docker service logs --tail 100 "${WORKER_SERVICE}" 2>&1 | grep -qE "RetryException|HTTP response code: 403|SEVERE:"; then
     echo "Worker startup failure detected. Logs:" >&2
     docker service logs --tail 150 "${WORKER_SERVICE}" >&2 || true
     exit 1
   fi
-  if curl --silent --user "${JENKINS_USER}:${JENKINS_PASS}" \
-    "${JENKINS_BASE_URL}/jenkins/computer/api/json?pretty=true" | rg -q '"totalExecutors"\s*:\s*[1-9]'; then
+  if curl --silent --config "${curl_cfg}" \
+    "${JENKINS_BASE_URL}/jenkins/computer/api/json?pretty=true" | grep -qE '"totalExecutors"\s*:\s*[1-9]'; then
     echo "Worker is connected."
     echo "Jenkins URL: ${JENKINS_BASE_URL}/jenkins"
     exit 0

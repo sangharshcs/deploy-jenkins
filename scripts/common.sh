@@ -40,6 +40,7 @@ init_defaults() {
   WORKER_ROOT="${WORKER_ROOT:-/opt/worker_home}"
   UI_PORT="${UI_PORT:-8080}"
   AGENTS_PORT="${AGENTS_PORT:-50000}"
+  EXPOSE_AGENT_PORT="${EXPOSE_AGENT_PORT:-0}"
   CONTROLLER_SERVICE="${CONTROLLER_SERVICE:-jenkins-controller}"
   WORKER_SERVICE="${WORKER_SERVICE:-jenkins-worker}"
   CONTROLLER_STACK_SERVICE="${CONTROLLER_STACK_SERVICE:-${CONTROLLER_SERVICE}_main}"
@@ -73,7 +74,7 @@ wait_http_200() {
   local sleep_seconds="${3:-4}"
   local i
   for ((i=1; i<=attempts; i++)); do
-    if curl --location --silent --output /dev/null --write-out "%{http_code}" "${url}" | rg -q "^200$"; then
+    if curl --silent --output /dev/null --write-out "%{http_code}" "${url}" | grep -qE "^200$"; then
       return 0
     fi
     sleep "${sleep_seconds}"
@@ -82,10 +83,20 @@ wait_http_200() {
 }
 
 render_controller_compose() {
-  sed \
+  local rendered
+  rendered="$(sed \
     -e "s#@CONTROLLER_IMAGE@#${CONTROLLER_IMAGE}#g" \
     -e "s#@CONTROLLER_ROOT@#${CONTROLLER_ROOT}#g" \
-    "${CONTROLLER_TEMPLATE}" > "${CONTROLLER_RENDERED}"
+    "${CONTROLLER_TEMPLATE}")"
+
+  if [[ "${EXPOSE_AGENT_PORT}" == "1" ]]; then
+    awk -v extra_port="      - ${AGENTS_PORT}:50000" '
+      { print }
+      /- \${UI_PORT:-8080}:8080/ { print extra_port }
+    ' <<< "${rendered}" > "${CONTROLLER_RENDERED}"
+  else
+    printf "%s\n" "${rendered}" > "${CONTROLLER_RENDERED}"
+  fi
 }
 
 ensure_secret() {

@@ -36,6 +36,8 @@ These are mandatory:
 Optional:
 
 - `JENKINS_URL_SCHEME` (defaults to `http`)
+- `EXPOSE_AGENT_PORT` (defaults to `0`; set `1` to expose JNLP 50000)
+- `DOCKER_SOCK_MOUNT` (defaults to `1`; set `0` to avoid mounting host Docker socket)
 - `CONTROLLER_ROOT`, `WORKER_ROOT`
 - `DOCKERHUB_NAMESPACE`
 - `CONTROLLER_IMAGE_REPO`, `WORKER_IMAGE_REPO`
@@ -49,6 +51,7 @@ Optional:
 - Keep secret material in Docker secrets (`jenkins-user`, `jenkins-pass`).
 - Do not reintroduce `777` permissions on Jenkins home or worker root paths.
 - Do not add passwordless sudo (`NOPASSWD`) into container images.
+- Treat `DOCKER_SOCK_MOUNT=1` as high-risk: it effectively grants host-level Docker control to worker jobs.
 
 ## Safe change guidance
 
