@@ -72,11 +72,15 @@ wait_http_200() {
   local url="$1"
   local attempts="${2:-30}"
   local sleep_seconds="${3:-4}"
+  local label="${4:-${url}}"
+  local code
   local i
   for ((i=1; i<=attempts; i++)); do
-    if curl --silent --output /dev/null --write-out "%{http_code}" "${url}" | grep -qE "^200$"; then
+    code="$(curl --silent --output /dev/null --write-out "%{http_code}" "${url}" || true)"
+    if [[ "${code}" == "200" ]]; then
       return 0
     fi
+    echo "Waiting for ${label} (${i}/${attempts}, status=${code:-curl-failed})..."
     sleep "${sleep_seconds}"
   done
   return 1

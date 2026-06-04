@@ -1,0 +1,102 @@
+name: Validate Docker Swarm Deployment
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-swarm-deployment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # Required by scripts/common.sh and scripts/deploy.sh.
+      JENKINS_SERVER_IP: 127.0.0.1
+      JENKINS_USER: ci-admin
+      JENKINS_PASS: ci-pass
+      CONTROLLER_ROOT: /tmp/jenkins_controller_home_ci
+      WORKER_ROOT: /tmp/jenkins_worker_home_ci
+      DEPLOY_TAG: swarm-main-${{ github.run_id }}-${{ github.run_attempt }}
+      ROTATE_SECRETS: "1"
+      EXPOSE_AGENT_PORT: "0"
+      DOCKER_SOCK_MOUNT: "0"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Resolve image repos for this run
+        env:
+          NAMESPACE_OVERRIDE: ${{ vars.DOCKERHUB_NAMESPACE }}
+          CONTROLLER_IMAGE_REPO_OVERRIDE: ${{ vars.CONTROLLER_IMAGE_REPO }}
+          WORKER_IMAGE_REPO_OVERRIDE: ${{ vars.WORKER_IMAGE_REPO }}
+        run: |
+          set -euo pipefail
+          NAMESPACE="${NAMESPACE_OVERRIDE:-${GITHUB_REPOSITORY_OWNER}}"
+          echo "DOCKERHUB_NAMESPACE=${NAMESPACE}" >> "${GITHUB_ENV}"
+          echo "CONTROLLER_IMAGE_REPO=${CONTROLLER_IMAGE_REPO_OVERRIDE:-${NAMESPACE}/jenkins-controller}" >> "${GITHUB_ENV}"
+          echo "WORKER_IMAGE_REPO=${WORKER_IMAGE_REPO_OVERRIDE:-${NAMESPACE}/jenkins-worker}" >> "${GITHUB_ENV}"
+
+      - name: Build controller and worker images
+        run: ./scripts/build.sh
+
+      - name: Initialize Docker Swarm
+        run: |
+          set -euo pipefail
+          state="$(docker info --format '{{.Swarm.LocalNodeState}}')"
+          if [[ "${state}" != "active" ]]; then
+            docker swarm init
+          fi
+          docker info --format 'swarm_state={{.Swarm.LocalNodeState}}'
+
+      - name: Validate basic Docker Swarm capabilities
+        run: |
+          set -euo pipefail
+          # Swarm node should be available and ready to schedule services.
+          docker node ls
+
+          # Overlay network create/inspect validates core Swarm networking.
+          docker network create --driver overlay --attachable swarm-validation-net >/dev/null
+          docker network inspect swarm-validation-net --format '{{.Name}} {{.Driver}} {{.Scope}}'
+
+          # Secret create/inspect/remove validates Swarm secret management.
+          printf "validation-secret" | docker secret create swarm-validation-secret - >/dev/null
+          docker secret inspect swarm-validation-secret --format '{{.Spec.Name}}'
+
+          # Service create + running replica check validates scheduler/runtime.
+          docker service create \
+            --name swarm-validation-service \
+            --network swarm-validation-net \
+            --replicas 1 \
+            alpine:3.20 \
+            sleep 120 >/dev/null
+
+          ready=0
+          for i in {1..30}; do
+            replicas="$(docker service ls --filter name=swarm-validation-service --format '{{.Replicas}}')"
+            if [[ "${replicas}" == "1/1" ]]; then
+              ready=1
+              echo "Swarm service is running (${replicas})."
+              break
+            fi
+            echo "Waiting for Swarm service replicas (${i}/30): ${replicas:-unknown}"
+            sleep 2
+          done
+          if [[ "${ready}" != "1" ]]; then
+            echo "Swarm test service did not reach 1/1 replicas."
+            docker service ps --no-trunc swarm-validation-service || true
+            exit 1
+          fi
+
+      - name: Cleanup swarm resources
+        if: always()
+        run: |
+          set -euo pipefail
+          docker service rm swarm-validation-service >/dev/null 2>&1 || true
+          docker secret rm swarm-validation-secret >/dev/null 2>&1 || true
+          docker network rm swarm-validation-net >/dev/null 2>&1 || true
+          docker swarm leave --force >/dev/null 2>&1 || true
