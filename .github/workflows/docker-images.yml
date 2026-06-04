@@ -1,0 +1,172 @@
+name: Build, Test, and Push Docker Images
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke-test:
+    runs-on: ubuntu-latest
+    env:
+      # Required by scripts/common.sh even when only building.
+      JENKINS_SERVER_IP: 127.0.0.1
+      JENKINS_USER: ci-admin
+      JENKINS_PASS: ci-pass
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve image repo and tag
+        env:
+          NAMESPACE_OVERRIDE: ${{ vars.DOCKERHUB_NAMESPACE }}
+          CONTROLLER_IMAGE_REPO_OVERRIDE: ${{ vars.CONTROLLER_IMAGE_REPO }}
+          WORKER_IMAGE_REPO_OVERRIDE: ${{ vars.WORKER_IMAGE_REPO }}
+        run: |
+          set -euo pipefail
+          NAMESPACE="${NAMESPACE_OVERRIDE:-${GITHUB_REPOSITORY_OWNER}}"
+          echo "DOCKERHUB_NAMESPACE=${NAMESPACE}" >> "${GITHUB_ENV}"
+          echo "CONTROLLER_IMAGE_REPO=${CONTROLLER_IMAGE_REPO_OVERRIDE:-${NAMESPACE}/jenkins-controller}" >> "${GITHUB_ENV}"
+          echo "WORKER_IMAGE_REPO=${WORKER_IMAGE_REPO_OVERRIDE:-${NAMESPACE}/jenkins-worker}" >> "${GITHUB_ENV}"
+          echo "DEPLOY_TAG=ci-${GITHUB_SHA::12}" >> "${GITHUB_ENV}"
+
+      - name: Build controller and worker images
+        run: ./scripts/build.sh
+
+      - name: Smoke test controller and worker connectivity
+        run: |
+          set -euo pipefail
+
+          CONTROLLER_IMAGE="${CONTROLLER_IMAGE_REPO}:${DEPLOY_TAG}"
+          WORKER_IMAGE="${WORKER_IMAGE_REPO}:${DEPLOY_TAG}"
+          TEST_NETWORK="jenkins-ci-net"
+          TEST_TMP_DIR="$(mktemp -d)"
+
+          cleanup() {
+            docker rm -f jenkins-worker-ci >/dev/null 2>&1 || true
+            docker rm -f jenkins-controller-ci >/dev/null 2>&1 || true
+            docker network rm "${TEST_NETWORK}" >/dev/null 2>&1 || true
+            rm -rf "${TEST_TMP_DIR}"
+          }
+          trap cleanup EXIT
+
+          printf "%s" "${JENKINS_USER}" > "${TEST_TMP_DIR}/jenkins-user"
+          printf "%s" "${JENKINS_PASS}" > "${TEST_TMP_DIR}/jenkins-pass"
+
+          docker network create "${TEST_NETWORK}" >/dev/null
+
+          docker run -d \
+            --name jenkins-controller-ci \
+            --network "${TEST_NETWORK}" \
+            -p 18080:8080 \
+            -v "${TEST_TMP_DIR}/jenkins-user:/run/secrets/jenkins-user:ro" \
+            -v "${TEST_TMP_DIR}/jenkins-pass:/run/secrets/jenkins-pass:ro" \
+            "${CONTROLLER_IMAGE}" >/dev/null
+
+          for _ in {1..60}; do
+            if curl -fsS -o /dev/null http://127.0.0.1:18080/jenkins/login; then
+              break
+            fi
+            sleep 5
+          done
+
+          curl -fsS -o /dev/null http://127.0.0.1:18080/jenkins/login
+
+          docker run -d \
+            --name jenkins-worker-ci \
+            --network "${TEST_NETWORK}" \
+            -e "JENKINS_CONTROLLER_URL=http://jenkins-controller-ci:8080/jenkins" \
+            -e "WORKER_ROOT=/tmp/jenkins_worker_home_ci" \
+            -v "${TEST_TMP_DIR}/jenkins-user:/run/secrets/jenkins-user:ro" \
+            -v "${TEST_TMP_DIR}/jenkins-pass:/run/secrets/jenkins-pass:ro" \
+            "${WORKER_IMAGE}" >/dev/null
+
+          connected=0
+          for _ in {1..24}; do
+            logs="$(docker logs jenkins-worker-ci 2>&1 || true)"
+            if echo "${logs}" | awk '/RetryException|HTTP response code: 403|SEVERE:/{exit 10}'; then
+              :
+            else
+              echo "Worker startup failure detected:"
+              echo "${logs}"
+              exit 1
+            fi
+
+            if echo "${logs}" | awk '/Connected/{found=1} END{exit(found?0:1)}'; then
+              connected=1
+              break
+            fi
+            sleep 5
+          done
+
+          if [[ "${connected}" != "1" ]]; then
+            echo "Worker did not connect in time."
+            docker logs jenkins-worker-ci 2>&1 || true
+            exit 1
+          fi
+
+          curl -fsS -u "${JENKINS_USER}:${JENKINS_PASS}" \
+            "http://127.0.0.1:18080/jenkins/computer/api/json?pretty=true" > "${TEST_TMP_DIR}/nodes.json"
+
+          python3 - "${TEST_TMP_DIR}/nodes.json" <<'PY'
+          import json
+          import sys
+          payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+          names = [c.get("displayName", "") for c in payload.get("computer", [])]
+          if len(names) < 2:
+              print(f"Expected at least 2 nodes, got {len(names)}: {names}")
+              sys.exit(1)
+          print(f"Smoke test passed with nodes: {names}")
+          PY
+
+  push-images:
+    runs-on: ubuntu-latest
+    needs: build-and-smoke-test
+    if: github.event_name != 'pull_request'
+    env:
+      # Required by scripts/common.sh even when only building/pushing.
+      JENKINS_SERVER_IP: 127.0.0.1
+      JENKINS_USER: ci-admin
+      JENKINS_PASS: ci-pass
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve image repo and release tag
+        env:
+          NAMESPACE_OVERRIDE: ${{ vars.DOCKERHUB_NAMESPACE }}
+          CONTROLLER_IMAGE_REPO_OVERRIDE: ${{ vars.CONTROLLER_IMAGE_REPO }}
+          WORKER_IMAGE_REPO_OVERRIDE: ${{ vars.WORKER_IMAGE_REPO }}
+        run: |
+          set -euo pipefail
+          NAMESPACE="${NAMESPACE_OVERRIDE:-${GITHUB_REPOSITORY_OWNER}}"
+          echo "DOCKERHUB_NAMESPACE=${NAMESPACE}" >> "${GITHUB_ENV}"
+          echo "CONTROLLER_IMAGE_REPO=${CONTROLLER_IMAGE_REPO_OVERRIDE:-${NAMESPACE}/jenkins-controller}" >> "${GITHUB_ENV}"
+          echo "WORKER_IMAGE_REPO=${WORKER_IMAGE_REPO_OVERRIDE:-${NAMESPACE}/jenkins-worker}" >> "${GITHUB_ENV}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "DEPLOY_TAG=${GITHUB_REF_NAME}" >> "${GITHUB_ENV}"
+          else
+            echo "DEPLOY_TAG=sha-${GITHUB_SHA::12}" >> "${GITHUB_ENV}"
+          fi
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build images
+        run: ./scripts/build.sh
+
+      - name: Push images
+        env:
+          PUSH_LATEST: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && '1' || '0' }}
+        run: ./scripts/push.sh
