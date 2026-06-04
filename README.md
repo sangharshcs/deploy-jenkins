@@ -71,7 +71,7 @@ flowchart TB
     SECRETS -->|"/run/secrets (read-only)"| WORKERS
 ```
 
-> Workers download `swarm-client.jar` directly from the controller at startup, then register via WebSocket. In WebSocket mode, workers do not require inbound agent-port access; this repo still exposes `50000` by default for compatibility with non-WebSocket/JNLP use cases.
+> Workers download `swarm-client.jar` directly from the controller at startup, then register via WebSocket. By default this repo does **not** expose JNLP port `50000`; set `EXPOSE_AGENT_PORT=1` if you need legacy JNLP connectivity.
 
 ---
 
@@ -271,9 +271,11 @@ All configuration lives in `.env`. Copy `.env.example` to get started.
 | `JENKINS_PASS` | ✅ | — | Admin password |
 | `JENKINS_URL_SCHEME` | | `http` | `http` or `https` |
 | `UI_PORT` | | `8080` | Controller web UI port |
-| `AGENTS_PORT` | | `50000` | JNLP agent port |
+| `AGENTS_PORT` | | `50000` | JNLP agent port (used only when `EXPOSE_AGENT_PORT=1`) |
+| `EXPOSE_AGENT_PORT` | | `0` | Set to `1` to publish JNLP port `50000` |
 | `CONTROLLER_ROOT` | | `/opt/jenkins_home` | Host path for Jenkins data |
 | `WORKER_ROOT` | | `/opt/worker_home` | Host path for worker workspace |
+| `DOCKER_SOCK_MOUNT` | | `1` | Set to `0` to disable mounting `/var/run/docker.sock` into workers |
 | `DOCKERHUB_NAMESPACE` | | `sangharshcs` | Docker Hub org/user for image names |
 | `CONTROLLER_IMAGE_REPO` | | `<namespace>/jenkins-controller` | Override controller image repo |
 | `WORKER_IMAGE_REPO` | | `<namespace>/jenkins-worker` | Override worker image repo |
@@ -336,7 +338,10 @@ This setup is designed to avoid the most common Jenkins deployment mistakes:
 | Credentials never in env vars | Mounted as Docker secrets at `/run/secrets/` — read by controller bootstrap and worker startup |
 | Idempotent admin creation | `security.groovy` checks if the user exists before creating — safe to redeploy |
 | Anonymous read disabled | `setAllowAnonymousRead(false)` enforced at bootstrap |
+| CSRF protection enabled | `security.groovy` explicitly sets `DefaultCrumbIssuer(true)` |
+| Authorization model | Uses `FullControlOnceLoggedInAuthorizationStrategy`; every authenticated user is effectively admin. For multi-user setups, replace this with Matrix Authorization Strategy. |
 | Restrictive host permissions | Controller and worker home dirs created with `750` |
+| Docker socket risk is explicit | Worker Docker socket mount is configurable (`DOCKER_SOCK_MOUNT=0` disables it). If enabled, Jenkins jobs can access the host Docker daemon. |
 | No `NOPASSWD` sudo | Removed from worker image entirely |
 | Minimal plugin surface | Controller ships with `swarm` only |
 | Unique deploy tags | Timestamped tags per deploy — no stale `latest` cache |

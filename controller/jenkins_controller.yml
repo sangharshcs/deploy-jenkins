@@ -1,17 +1,22 @@
-version: '3.1'
+version: "3.1"
 services:
- main:
-  image: @CONTROLLER_IMAGE@
-  ports:
-   - ${UI_PORT:-8080}:8080
-   - ${AGENTS_PORT:-50000}:50000
-  volumes:
-   - @CONTROLLER_ROOT@:/var/jenkins_home
-  secrets:
-   - jenkins-user
-   - jenkins-pass
+  main:
+    image: "@CONTROLLER_IMAGE@"
+    ports:
+      - ${UI_PORT:-8080}:8080
+    volumes:
+      - "@CONTROLLER_ROOT@:/var/jenkins_home"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/jenkins/login >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    secrets:
+      - jenkins-user
+      - jenkins-pass
 secrets:
- jenkins-user:
-  external: true
- jenkins-pass:
-  external: true
+  jenkins-user:
+    external: true
+  jenkins-pass:
+    external: true

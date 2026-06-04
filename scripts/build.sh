@@ -6,7 +6,6 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 load_env
-validate_env
 init_defaults
 
 echo "Building controller image: ${CONTROLLER_IMAGE}"
