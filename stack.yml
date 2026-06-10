@@ -1,0 +1,49 @@
+services:
+  controller:
+    image: ${CONTROLLER_IMAGE:?CONTROLLER_IMAGE must be set — run via deploy.sh or export it first}
+    ports:
+      - "${UI_PORT:-8080}:8080"
+    volumes:
+      - "${CONTROLLER_ROOT:-/opt/jenkins_home}:/var/jenkins_home"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/jenkins/login >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    secrets:
+      - jenkins-user
+      - jenkins-pass
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  worker:
+    image: ${WORKER_IMAGE:?WORKER_IMAGE must be set — run via deploy.sh or export it first}
+    environment:
+      - JENKINS_CONTROLLER_URL=${JENKINS_CONTROLLER_URL:?JENKINS_CONTROLLER_URL must be set — run via deploy.sh or export it first}
+      - WORKER_ROOT=${WORKER_ROOT:-/opt/worker_home}
+      - SWARM_EXECUTORS=${SWARM_EXECUTORS:-5}
+      - SWARM_LABELS=${SWARM_LABELS:-swarm docker}
+      - SWARM_WEBSOCKET=${SWARM_WEBSOCKET:-true}
+    volumes:
+      - "${WORKER_ROOT:-/opt/worker_home}:${WORKER_ROOT:-/opt/worker_home}"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    secrets:
+      - jenkins-user
+      - jenkins-pass
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
+      # Retry window (~100s) must exceed controller start_period (60s) + one healthcheck interval (30s).
+      # Increase max_attempts if the controller is slow to pass its healthcheck.
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 10
+
+secrets:
+  jenkins-user:
+    external: true
+  jenkins-pass:
+    external: true

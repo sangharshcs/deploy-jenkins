@@ -26,7 +26,7 @@ The conventional way to add a Jenkins build node is painful: navigate to **Manag
 The [Jenkins Swarm Plugin](https://plugins.jenkins.io/swarm/) inverts this entirely. Workers connect *to* the controller — the controller doesn't reach out to them. Combine that with Docker Swarm's replica scaling and you get a build cluster where capacity is a single command:
 
 ```bash
-docker service scale jenkins-worker=10
+docker service scale jenkins_worker=10
 ```
 
 Ten workers appear in the Jenkins node list. Scale back down and they disappear cleanly. This repo provides the complete, production-hardened setup to make that work.
@@ -71,18 +71,18 @@ flowchart TB
     SECRETS -->|"/run/secrets (read-only)"| WORKERS
 ```
 
-> Workers download `swarm-client.jar` directly from the controller at startup, then register via WebSocket. By default this repo does **not** expose JNLP port `50000`; set `EXPOSE_AGENT_PORT=1` if you need legacy JNLP connectivity.
+> Workers download `swarm-client.jar` directly from the controller at startup, then register via WebSocket. By default this repo does **not** expose JNLP port `50000`; add `- "50000:50000"` to the controller ports in `stack.yml` if you need legacy JNLP connectivity.
 
 ---
 
 ## Features
 
 - **Zero-touch node registration** — workers self-register via the Jenkins Swarm Plugin; no XML, no UI clicks, no Groovy
-- **Elastic capacity** — `docker service scale jenkins-worker=N` and the node list updates in real time
+- **Elastic capacity** — `docker service scale jenkins_worker=N` and the node list updates in real time
 - **Secrets-first** — credentials live in Docker secrets, mounted read-only at `/run/secrets/`; never environment variables
 - **Minimal plugin surface** — controller ships with `swarm` only; no plugin sprawl to maintain
 - **Unique deploy tags** — every deploy generates a timestamped image tag, eliminating stale `latest` cache bugs
-- **Fast-fail deploys** — `deploy.sh` waits for HTTP 200 on `/jenkins/login`, inspects worker logs for startup errors, and exits with actionable output if anything is wrong
+- **Single stack file** — `stack.yml` declares both controller and worker with native `${VAR}` env var interpolation; no template rendering or sed hacks
 - **Full CI pipeline** — GitHub Actions builds both images, runs a full controller + worker smoke test, and pushes to Docker Hub on merge
 
 ---
@@ -131,7 +131,7 @@ openssl rand -base64 24
 ./scripts/deploy.sh
 ```
 
-This one command builds both images, creates Docker secrets, deploys the controller stack, waits for it to become healthy, then starts a worker and verifies it connects. If anything fails, it prints the relevant service logs and exits.
+This one command builds both images, creates Docker secrets, and deploys the full stack. The worker uses Swarm restart policy to connect once the controller is ready — no blocking poll loop. Jenkins is available as soon as the controller healthcheck passes.
 
 ### 3 — Open Jenkins
 
@@ -153,9 +153,9 @@ sequenceDiagram
     participant C as Jenkins Controller
     participant W as Jenkins Worker
 
-    S->>C: docker stack deploy (controller)
-    S->>S: wait for /jenkins/login → HTTP 200
-    S->>W: docker service create (worker)
+    S->>C: docker stack deploy (stack.yml)
+    Note over C: controller healthcheck passes
+    Note over W: worker starts, retries until controller ready
 
     W->>C: GET /jenkins/swarm/swarm-client.jar
     C-->>W: swarm-client.jar (version-matched)
@@ -200,13 +200,13 @@ Add capacity at any time — the controller needs no changes:
 
 ```bash
 # Scale up
-docker service scale jenkins-worker=5
+docker service scale jenkins_worker=5
 
 # Scale back down
-docker service scale jenkins-worker=1
+docker service scale jenkins_worker=1
 
 # Remove all workers (controller keeps running)
-docker service scale jenkins-worker=0
+docker service scale jenkins_worker=0
 ```
 
 Workers register themselves as they start and deregister cleanly when they stop. The Jenkins node list reflects this in real time.
@@ -218,22 +218,19 @@ Workers register themselves as they start and deregister cleanly when they stop.
 ```
 deploy-jenkins/
 │
+├── stack.yml                    # Docker Swarm stack — controller + worker
+│
 ├── controller/
 │   ├── Dockerfile               # jenkins/jenkins:lts-jdk17
 │   ├── security.groovy          # Bootstrap: admin user, disable anonymous read
-│   ├── plugins.txt              # swarm only
-│   └── jenkins_controller.yml   # Docker Swarm stack template
+│   └── plugins.txt              # swarm only
 │
 ├── worker/
 │   ├── Dockerfile               # ubuntu:24.04 + openjdk-17
 │   └── start.sh                 # Auto-discovery entrypoint
 │
 ├── scripts/
-│   ├── common.sh                # Shared env loading, validation, helpers
-│   ├── build.sh                 # Build controller + worker images
-│   ├── deploy.sh                # Deploy with health checks
-│   ├── push.sh                  # Push to Docker Hub
-│   ├── logs.sh                  # Tail service logs
+│   ├── deploy.sh                # Build → secrets → stack deploy
 │   └── stop.sh                  # Tear down all services
 │
 ├── .github/workflows/
@@ -249,14 +246,12 @@ deploy-jenkins/
 
 | Command | What it does |
 |---|---|
-| `./scripts/build.sh` | Build controller and worker images |
-| `./scripts/deploy.sh` | Full deploy: build → secrets → stack → health check |
-| `SKIP_BUILD=1 ./scripts/deploy.sh` | Deploy without rebuilding |
-| `./scripts/push.sh` | Push images to Docker Hub |
-| `PUSH_LATEST=1 ./scripts/push.sh` | Push versioned tag + `:latest` |
-| `./scripts/logs.sh` | Tail recent logs from both services |
-| `TAIL_LINES=300 ./scripts/logs.sh` | Tail more lines |
+| `./scripts/deploy.sh` | Full deploy: build → secrets → stack deploy |
+| `./scripts/deploy.sh --skip-build` | Deploy without rebuilding images |
 | `./scripts/stop.sh` | Stop and remove all Jenkins services |
+| `docker service scale jenkins_worker=N` | Scale workers up or down |
+| `docker service logs -f jenkins_controller` | Tail controller logs |
+| `docker service logs -f jenkins_worker` | Tail worker logs |
 
 ---
 
@@ -271,19 +266,20 @@ All configuration lives in `.env`. Copy `.env.example` to get started.
 | `JENKINS_PASS` | ✅ | — | Admin password |
 | `JENKINS_URL_SCHEME` | | `http` | `http` or `https` |
 | `UI_PORT` | | `8080` | Controller web UI port |
-| `AGENTS_PORT` | | `50000` | JNLP agent port (used only when `EXPOSE_AGENT_PORT=1`) |
-| `EXPOSE_AGENT_PORT` | | `0` | Set to `1` to publish JNLP port `50000` |
 | `CONTROLLER_ROOT` | | `/opt/jenkins_home` | Host path for Jenkins data |
 | `WORKER_ROOT` | | `/opt/worker_home` | Host path for worker workspace |
-| `DOCKER_SOCK_MOUNT` | | `1` | Set to `0` to disable mounting `/var/run/docker.sock` into workers |
 | `DOCKERHUB_NAMESPACE` | | `sangharshcs` | Docker Hub org/user for image names |
 | `CONTROLLER_IMAGE_REPO` | | `<namespace>/jenkins-controller` | Override controller image repo |
 | `WORKER_IMAGE_REPO` | | `<namespace>/jenkins-worker` | Override worker image repo |
 | `WORKER_REPLICAS` | | `1` | Initial number of worker replicas |
-| `ROTATE_SECRETS` | | `0` | Set to `1` to force secret recreation on redeploy |
 | `DEPLOY_TAG` | | `<version>-<timestamp>` | Override image tag (e.g. `local-dev`) |
+| `SWARM_EXECUTORS` | | `5` | Number of executors per worker |
+| `SWARM_LABELS` | | `swarm docker` | Labels assigned to worker nodes |
+| `SWARM_WEBSOCKET` | | `true` | Use WebSocket for agent connection |
 
 > **Local Docker Desktop:** If `JENKINS_SERVER_IP` is `127.0.0.1` or `localhost`, workers automatically target `host.docker.internal` — no extra config needed.
+
+> **JNLP port:** To expose the agent port `50000`, add `- "50000:50000"` to the controller's `ports` section in `stack.yml`.
 
 ---
 
@@ -340,12 +336,10 @@ This setup is designed to avoid the most common Jenkins deployment mistakes:
 | Anonymous read disabled | `setAllowAnonymousRead(false)` enforced at bootstrap |
 | CSRF protection enabled | `security.groovy` explicitly sets `DefaultCrumbIssuer(true)` |
 | Authorization model | Uses `FullControlOnceLoggedInAuthorizationStrategy`; every authenticated user is effectively admin. For multi-user setups, replace this with Matrix Authorization Strategy. |
-| Restrictive host permissions | Controller and worker home dirs created with `750` |
-| Docker socket risk is explicit | Worker Docker socket mount is configurable (`DOCKER_SOCK_MOUNT=0` disables it). If enabled, Jenkins jobs can access the host Docker daemon. |
+| Docker socket risk is explicit | Worker Docker socket mount is in `stack.yml`; remove that volume entry to disable it. If enabled, Jenkins jobs can access the host Docker daemon. |
 | No `NOPASSWD` sudo | Removed from worker image entirely |
 | Minimal plugin surface | Controller ships with `swarm` only |
 | Unique deploy tags | Timestamped tags per deploy — no stale `latest` cache |
-| Credential rotation | `ROTATE_SECRETS=1` forces Docker secret recreation on next deploy |
 
 ---
 
@@ -353,19 +347,21 @@ This setup is designed to avoid the most common Jenkins deployment mistakes:
 
 **Controller not starting?**
 ```bash
-./scripts/logs.sh
-docker service ps jenkins-controller_main --no-trunc
+docker service logs --tail 100 jenkins_controller
+docker service ps jenkins_controller --no-trunc
 ```
 
 **Worker not connecting?**
 ```bash
-docker service logs --tail 100 jenkins-worker
+docker service logs --tail 100 jenkins_worker
 ```
 Look for `RetryException`, `HTTP response code: 403`, or `SEVERE:` — these indicate auth or URL misconfiguration.
 
 **Stale secrets from a previous deploy?**
 ```bash
-ROTATE_SECRETS=1 ./scripts/deploy.sh
+./scripts/stop.sh
+docker secret rm jenkins-user jenkins-pass 2>/dev/null || true
+./scripts/deploy.sh
 ```
 
 **Start completely fresh?**
@@ -384,7 +380,7 @@ Issues and PRs welcome. If you're extending this:
 - Read `AGENTS.md` before changing deploy or startup logic — it documents the security invariants that must not be violated
 - Keep credentials out of source files and images
 - Preserve the secrets-at-`/run/secrets/` pattern for any new credential handling
-- Run `./scripts/build.sh && ./scripts/deploy.sh` locally before opening a PR
+- Run `./scripts/deploy.sh` locally before opening a PR
 
 ---
 

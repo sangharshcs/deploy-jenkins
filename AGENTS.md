@@ -11,19 +11,18 @@ This directory contains Docker/script automation for building and deploying:
 
 1. Work from this directory:
    - `project-neo/GHEC/EB1A/deploy-jenkins`
-2. Read `.env.example` and `scripts/common.sh` before changing deploy logic.
+2. Read `.env.example` and `stack.yml` before changing deploy logic.
 3. Keep credentials out of source files.
 
 ## Command canon
 
 All commands assume the current directory is `deploy-jenkins/`.
 
-- Build images: `./scripts/build.sh`
-- Deploy services: `./scripts/deploy.sh`
-- Deploy without rebuild: `SKIP_BUILD=1 ./scripts/deploy.sh`
-- Show service logs: `./scripts/logs.sh`
-- Push images: `./scripts/push.sh`
-- Stop services: `./scripts/stop.sh`
+- Build and deploy: `./scripts/deploy.sh`
+- Deploy without rebuild: `./scripts/deploy.sh --skip-build`
+- Stop all services: `./scripts/stop.sh`
+- Controller logs: `docker service logs -f jenkins_controller`
+- Worker logs: `docker service logs -f jenkins_worker`
 
 ## Required environment variables
 
@@ -36,13 +35,16 @@ These are mandatory:
 Optional:
 
 - `JENKINS_URL_SCHEME` (defaults to `http`)
-- `EXPOSE_AGENT_PORT` (defaults to `0`; set `1` to expose JNLP 50000)
-- `DOCKER_SOCK_MOUNT` (defaults to `1`; set `0` to avoid mounting host Docker socket)
+- `UI_PORT` (defaults to `8080`)
 - `CONTROLLER_ROOT`, `WORKER_ROOT`
 - `DOCKERHUB_NAMESPACE`
 - `CONTROLLER_IMAGE_REPO`, `WORKER_IMAGE_REPO`
 - `WORKER_REPLICAS`
-- `ROTATE_SECRETS`
+- `SWARM_EXECUTORS`, `SWARM_LABELS`, `SWARM_WEBSOCKET`
+- `DEPLOY_TAG`
+
+> To expose the JNLP agent port (`50000`), add it directly to the controller's `ports` section in `stack.yml`.
+> To disable the Docker socket mount on workers, remove the `/var/run/docker.sock` volume entry from `stack.yml`.
 
 ## Security invariants (do not violate)
 
@@ -51,22 +53,23 @@ Optional:
 - Keep secret material in Docker secrets (`jenkins-user`, `jenkins-pass`).
 - Do not reintroduce `777` permissions on Jenkins home or worker root paths.
 - Do not add passwordless sudo (`NOPASSWD`) into container images.
-- Treat `DOCKER_SOCK_MOUNT=1` as high-risk: it effectively grants host-level Docker control to worker jobs.
+- Treat the Docker socket mount in `stack.yml` as high-risk: it effectively grants host-level Docker control to worker jobs.
 
 ## Safe change guidance
 
 - If you change service startup/auth flow, preserve secret consumption from `/run/secrets`.
 - If you modify health checks, avoid logging sensitive values.
 - If you update container images or dependencies, prefer supported LTS bases and minimal packages.
+- If you modify `stack.yml`, use `${VAR:-default}` syntax — do not reintroduce `@PLACEHOLDER@` style substitution.
 
 ## Validation checklist after edits
 
 Run and verify:
 
-1. `./scripts/build.sh`
-2. `./scripts/deploy.sh`
-3. Jenkins UI is reachable at:
+1. `./scripts/deploy.sh`
+2. Jenkins UI is reachable at:
    - `${JENKINS_URL_SCHEME}://${JENKINS_SERVER_IP}:8080/jenkins`
-4. Check logs immediately after startup:
-   - `./scripts/logs.sh`
-5. No secrets are printed in logs or committed to files.
+3. Check logs immediately after startup:
+   - `docker service logs --tail 50 jenkins_controller`
+   - `docker service logs --tail 50 jenkins_worker`
+4. No secrets are printed in logs or committed to files.
