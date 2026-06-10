@@ -1,6 +1,6 @@
 services:
   controller:
-    image: ${CONTROLLER_IMAGE}
+    image: ${CONTROLLER_IMAGE:?CONTROLLER_IMAGE must be set — run via deploy.sh or export it first}
     ports:
       - "${UI_PORT:-8080}:8080"
     volumes:
@@ -20,9 +20,9 @@ services:
         condition: on-failure
 
   worker:
-    image: ${WORKER_IMAGE}
+    image: ${WORKER_IMAGE:?WORKER_IMAGE must be set — run via deploy.sh or export it first}
     environment:
-      - JENKINS_CONTROLLER_URL=${JENKINS_CONTROLLER_URL}
+      - JENKINS_CONTROLLER_URL=${JENKINS_CONTROLLER_URL:?JENKINS_CONTROLLER_URL must be set — run via deploy.sh or export it first}
       - WORKER_ROOT=${WORKER_ROOT:-/opt/worker_home}
       - SWARM_EXECUTORS=${SWARM_EXECUTORS:-5}
       - SWARM_LABELS=${SWARM_LABELS:-swarm docker}
@@ -35,6 +35,8 @@ services:
       - jenkins-pass
     deploy:
       replicas: ${WORKER_REPLICAS:-1}
+      # Retry window (~100s) must exceed controller start_period (60s) + one healthcheck interval (30s).
+      # Increase max_attempts if the controller is slow to pass its healthcheck.
       restart_policy:
         condition: on-failure
         delay: 10s

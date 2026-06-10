@@ -19,11 +19,16 @@ jobs:
       JENKINS_SERVER_IP: 127.0.0.1
       JENKINS_USER: ci-admin
       JENKINS_PASS: ci-pass
+    outputs:
+      controller_image_repo: ${{ steps.resolve.outputs.controller_image_repo }}
+      worker_image_repo: ${{ steps.resolve.outputs.worker_image_repo }}
+      ci_tag: ${{ steps.resolve.outputs.ci_tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Resolve image repo and tag
+        id: resolve
         env:
           NAMESPACE_OVERRIDE: ${{ vars.DOCKERHUB_NAMESPACE }}
           CONTROLLER_IMAGE_REPO_OVERRIDE: ${{ vars.CONTROLLER_IMAGE_REPO }}
@@ -31,10 +36,16 @@ jobs:
         run: |
           set -euo pipefail
           NAMESPACE="${NAMESPACE_OVERRIDE:-${GITHUB_REPOSITORY_OWNER}}"
+          CONTROLLER_IMAGE_REPO="${CONTROLLER_IMAGE_REPO_OVERRIDE:-${NAMESPACE}/jenkins-controller}"
+          WORKER_IMAGE_REPO="${WORKER_IMAGE_REPO_OVERRIDE:-${NAMESPACE}/jenkins-worker}"
+          CI_TAG="ci-${GITHUB_SHA::12}"
           echo "DOCKERHUB_NAMESPACE=${NAMESPACE}" >> "${GITHUB_ENV}"
-          echo "CONTROLLER_IMAGE_REPO=${CONTROLLER_IMAGE_REPO_OVERRIDE:-${NAMESPACE}/jenkins-controller}" >> "${GITHUB_ENV}"
-          echo "WORKER_IMAGE_REPO=${WORKER_IMAGE_REPO_OVERRIDE:-${NAMESPACE}/jenkins-worker}" >> "${GITHUB_ENV}"
-          echo "DEPLOY_TAG=ci-${GITHUB_SHA::12}" >> "${GITHUB_ENV}"
+          echo "CONTROLLER_IMAGE_REPO=${CONTROLLER_IMAGE_REPO}" >> "${GITHUB_ENV}"
+          echo "WORKER_IMAGE_REPO=${WORKER_IMAGE_REPO}" >> "${GITHUB_ENV}"
+          echo "DEPLOY_TAG=${CI_TAG}" >> "${GITHUB_ENV}"
+          echo "controller_image_repo=${CONTROLLER_IMAGE_REPO}" >> "${GITHUB_OUTPUT}"
+          echo "worker_image_repo=${WORKER_IMAGE_REPO}" >> "${GITHUB_OUTPUT}"
+          echo "ci_tag=${CI_TAG}" >> "${GITHUB_OUTPUT}"
 
       - name: Build controller and worker images
         run: |
@@ -128,34 +139,49 @@ jobs:
           print(f"Smoke test passed with nodes: {names}")
           PY
 
+      - name: Save tested images
+        run: |
+          set -euo pipefail
+          docker save \
+            "${CONTROLLER_IMAGE_REPO}:${DEPLOY_TAG}" \
+            "${WORKER_IMAGE_REPO}:${DEPLOY_TAG}" \
+            | gzip > images.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-images
+          path: images.tar.gz
+          retention-days: 1
+
   push-images:
     runs-on: ubuntu-latest
     needs: build-and-smoke-test
     if: github.event_name != 'pull_request'
-    env:
-      JENKINS_SERVER_IP: 127.0.0.1
-      JENKINS_USER: ci-admin
-      JENKINS_PASS: ci-pass
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Resolve image repo and release tag
+      - name: Resolve release tag
         env:
           NAMESPACE_OVERRIDE: ${{ vars.DOCKERHUB_NAMESPACE }}
           CONTROLLER_IMAGE_REPO_OVERRIDE: ${{ vars.CONTROLLER_IMAGE_REPO }}
           WORKER_IMAGE_REPO_OVERRIDE: ${{ vars.WORKER_IMAGE_REPO }}
         run: |
           set -euo pipefail
-          NAMESPACE="${NAMESPACE_OVERRIDE:-${GITHUB_REPOSITORY_OWNER}}"
-          echo "DOCKERHUB_NAMESPACE=${NAMESPACE}" >> "${GITHUB_ENV}"
-          echo "CONTROLLER_IMAGE_REPO=${CONTROLLER_IMAGE_REPO_OVERRIDE:-${NAMESPACE}/jenkins-controller}" >> "${GITHUB_ENV}"
-          echo "WORKER_IMAGE_REPO=${WORKER_IMAGE_REPO_OVERRIDE:-${NAMESPACE}/jenkins-worker}" >> "${GITHUB_ENV}"
+          echo "CONTROLLER_IMAGE_REPO=${{ needs.build-and-smoke-test.outputs.controller_image_repo }}" >> "${GITHUB_ENV}"
+          echo "WORKER_IMAGE_REPO=${{ needs.build-and-smoke-test.outputs.worker_image_repo }}" >> "${GITHUB_ENV}"
+          echo "CI_TAG=${{ needs.build-and-smoke-test.outputs.ci_tag }}" >> "${GITHUB_ENV}"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             echo "DEPLOY_TAG=${GITHUB_REF_NAME}" >> "${GITHUB_ENV}"
           else
             echo "DEPLOY_TAG=sha-${GITHUB_SHA::12}" >> "${GITHUB_ENV}"
           fi
+
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-images
+
+      - name: Load tested images
+        run: docker load < images.tar.gz
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -163,17 +189,13 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build images
-        run: |
-          set -euo pipefail
-          docker build --no-cache -t "${CONTROLLER_IMAGE_REPO}:${DEPLOY_TAG}" controller
-          docker build -t "${WORKER_IMAGE_REPO}:${DEPLOY_TAG}" worker
-
-      - name: Push images
+      - name: Retag and push images
         env:
           PUSH_LATEST: ${{ (github.ref == 'refs/heads/main') && '1' || '0' }}
         run: |
           set -euo pipefail
+          docker tag "${CONTROLLER_IMAGE_REPO}:${CI_TAG}" "${CONTROLLER_IMAGE_REPO}:${DEPLOY_TAG}"
+          docker tag "${WORKER_IMAGE_REPO}:${CI_TAG}" "${WORKER_IMAGE_REPO}:${DEPLOY_TAG}"
           docker push "${CONTROLLER_IMAGE_REPO}:${DEPLOY_TAG}"
           docker push "${WORKER_IMAGE_REPO}:${DEPLOY_TAG}"
           if [[ "${PUSH_LATEST}" == "1" ]]; then
