@@ -25,5 +25,3 @@
 - Hardened bootstrap and runtime defaults:
   - Docker secrets for Jenkins credentials
   - Crumb issuer explicitly enabled (new behavior; Jenkins API calls now require crumb handling unless using token-based flows)
-  - Optional agent-port exposure (`EXPOSE_AGENT_PORT`)
-  - Optional Docker socket mount for workers (`DOCKER_SOCK_MOUNT`)

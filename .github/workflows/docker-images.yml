@@ -16,7 +16,6 @@ jobs:
   build-and-smoke-test:
     runs-on: ubuntu-latest
     env:
-      # Required by scripts/common.sh even when only building.
       JENKINS_SERVER_IP: 127.0.0.1
       JENKINS_USER: ci-admin
       JENKINS_PASS: ci-pass
@@ -38,7 +37,10 @@ jobs:
           echo "DEPLOY_TAG=ci-${GITHUB_SHA::12}" >> "${GITHUB_ENV}"
 
       - name: Build controller and worker images
-        run: ./scripts/build.sh
+        run: |
+          set -euo pipefail
+          docker build --no-cache -t "${CONTROLLER_IMAGE_REPO}:${DEPLOY_TAG}" controller
+          docker build -t "${WORKER_IMAGE_REPO}:${DEPLOY_TAG}" worker
 
       - name: Smoke test controller and worker connectivity
         run: |
@@ -131,7 +133,6 @@ jobs:
     needs: build-and-smoke-test
     if: github.event_name != 'pull_request'
     env:
-      # Required by scripts/common.sh even when only building/pushing.
       JENKINS_SERVER_IP: 127.0.0.1
       JENKINS_USER: ci-admin
       JENKINS_PASS: ci-pass
@@ -163,9 +164,21 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build images
-        run: ./scripts/build.sh
+        run: |
+          set -euo pipefail
+          docker build --no-cache -t "${CONTROLLER_IMAGE_REPO}:${DEPLOY_TAG}" controller
+          docker build -t "${WORKER_IMAGE_REPO}:${DEPLOY_TAG}" worker
 
       - name: Push images
         env:
           PUSH_LATEST: ${{ (github.ref == 'refs/heads/main') && '1' || '0' }}
-        run: ./scripts/push.sh
+        run: |
+          set -euo pipefail
+          docker push "${CONTROLLER_IMAGE_REPO}:${DEPLOY_TAG}"
+          docker push "${WORKER_IMAGE_REPO}:${DEPLOY_TAG}"
+          if [[ "${PUSH_LATEST}" == "1" ]]; then
+            docker tag "${CONTROLLER_IMAGE_REPO}:${DEPLOY_TAG}" "${CONTROLLER_IMAGE_REPO}:latest"
+            docker tag "${WORKER_IMAGE_REPO}:${DEPLOY_TAG}" "${WORKER_IMAGE_REPO}:latest"
+            docker push "${CONTROLLER_IMAGE_REPO}:latest"
+            docker push "${WORKER_IMAGE_REPO}:latest"
+          fi

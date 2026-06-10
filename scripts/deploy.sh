@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.."; && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [[ -f "${ROOT_DIR}/.env" ]] && source "${ROOT_DIR}/.env"
 
 # Defaults
@@ -46,13 +46,19 @@ if [[ "${1:-}" != "--skip-build" ]]; then
   docker build -t "${WORKER_IMAGE}" "${ROOT_DIR}/worker"
 fi
 
+[[ -n "${ROTATE_SECRETS:-}" ]] && echo "WARN: ROTATE_SECRETS is no longer supported. See README §Stale secrets." >&2
+
 # Create host directories
 mkdir -p "${CONTROLLER_ROOT}" "${WORKER_ROOT}"
+chmod 750 "${CONTROLLER_ROOT}" "${WORKER_ROOT}"
 
 # Create secrets if they don't exist
 for secret in jenkins-user jenkins-pass; do
   if ! docker secret inspect "${secret}" >/dev/null 2>&1; then
-    val="${JENKINS_USER}"; [[ "${secret}" == "jenkins-pass" ]] && val="${JENKINS_PASS}"
+    case "${secret}" in
+      jenkins-user) val="${JENKINS_USER}" ;;
+      jenkins-pass) val="${JENKINS_PASS}" ;;
+    esac
     printf "%s" "${val}" | docker secret create "${secret}" - >/dev/null
     echo "Created secret: ${secret}"
   fi
