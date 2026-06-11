@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/sangharshcs/deploy-jenkins/actions/workflows/docker-images.yml/badge.svg)](https://github.com/sangharshcs/deploy-jenkins/actions/workflows/docker-images.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Jenkins LTS](https://img.shields.io/badge/Jenkins-LTS%20JDK17-D24939?logo=jenkins&logoColor=white)](https://www.jenkins.io/changelog-stable/)
+[![Jenkins LTS](https://img.shields.io/badge/Jenkins-LTS%20JDK21-D24939?logo=jenkins&logoColor=white)](https://www.jenkins.io/changelog-stable/)
 [![Docker Swarm](https://img.shields.io/badge/Orchestration-Docker%20Swarm-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/engine/swarm/)
 [![Ubuntu 24.04](https://img.shields.io/badge/Worker%20Base-Ubuntu%2024.04-E95420?logo=ubuntu&logoColor=white)](https://hub.docker.com/_/ubuntu)
 
@@ -48,14 +48,14 @@ flowchart TB
         direction TB
 
         subgraph CTRL ["Controller (Stack Service)"]
-            JC["Jenkins Controller\nlts-jdk17 · :8080/jenkins\nswarm plugin · Docker secrets"]
+            JC["Jenkins Controller\nlts-slim-jdk21 · :8080/jenkins\nswarm plugin · Docker secrets"]
         end
 
         subgraph WORKERS ["Worker Replicas — scale freely"]
             direction LR
-            W1["Worker 1\nubuntu:24.04\nopenjdk-17"]
-            W2["Worker 2\nubuntu:24.04\nopenjdk-17"]
-            WN["Worker N\nubuntu:24.04\nopenjdk-17"]
+            W1["Worker 1\nubuntu:24.04\nopenjdk-21"]
+            W2["Worker 2\nubuntu:24.04\nopenjdk-21"]
+            WN["Worker N\nubuntu:24.04\nopenjdk-21"]
         end
 
         W1 -->|"auto-register\n(swarm plugin · WebSocket)"| JC
@@ -221,7 +221,7 @@ deploy-jenkins/
 ├── stack.yml                    # Docker Swarm stack — controller + worker
 │
 ├── controller/
-│   ├── Dockerfile               # jenkins/jenkins:lts-jdk17
+│   ├── Dockerfile               # jenkins/jenkins:lts-slim-jdk21
 │   ├── security.groovy          # Bootstrap: admin user, disable anonymous read
 │   └── plugins.txt              # swarm only
 │
@@ -248,7 +248,7 @@ deploy-jenkins/
 |---|---|
 | `./scripts/deploy.sh` | Full deploy: build → secrets → stack deploy |
 | `./scripts/deploy.sh --skip-build` | Deploy without rebuilding images |
-| `./scripts/stop.sh` | Stop and remove all Jenkins services |
+| `./scripts/stop.sh` | Stop stack and remove Docker secrets |
 | `docker service scale jenkins_worker=N` | Scale workers up or down |
 | `docker service logs -f jenkins_controller` | Tail controller logs |
 | `docker service logs -f jenkins_worker` | Tail worker logs |
@@ -337,7 +337,7 @@ This setup is designed to avoid the most common Jenkins deployment mistakes:
 | CSRF protection enabled | `security.groovy` explicitly sets `DefaultCrumbIssuer(true)` |
 | Authorization model | Uses `FullControlOnceLoggedInAuthorizationStrategy`; every authenticated user is effectively admin. For multi-user setups, replace this with Matrix Authorization Strategy. |
 | Docker socket risk is explicit | Worker Docker socket mount is in `stack.yml`; remove that volume entry to disable it. If enabled, Jenkins jobs can access the host Docker daemon. |
-| No `NOPASSWD` sudo | Removed from worker image entirely |
+| No `NOPASSWD` sudo | Removed from worker image entirely; worker runs as `root` only to access the Docker socket — remove the `docker.sock` volume in `stack.yml` to run as the `jenkins` user instead |
 | Minimal plugin surface | Controller ships with `swarm` only |
 | Unique deploy tags | Timestamped tags per deploy — no stale `latest` cache |
 
@@ -357,17 +357,9 @@ docker service logs --tail 100 jenkins_worker
 ```
 Look for `RetryException`, `HTTP response code: 403`, or `SEVERE:` — these indicate auth or URL misconfiguration.
 
-**Stale secrets from a previous deploy?**
+**Stale secrets or starting completely fresh?**
 ```bash
-./scripts/stop.sh
-docker secret rm jenkins-user jenkins-pass 2>/dev/null || true
-./scripts/deploy.sh
-```
-
-**Start completely fresh?**
-```bash
-./scripts/stop.sh
-docker secret rm jenkins-user jenkins-pass 2>/dev/null || true
+./scripts/stop.sh   # removes stack and Docker secrets
 ./scripts/deploy.sh
 ```
 

@@ -1,8 +1,12 @@
-FROM jenkins/jenkins:lts-jdk17
+FROM jenkins/jenkins:lts-slim-jdk21
 
-ENV JAVA_OPTS="-Djenkins.install.runSetupWizard=false -Djava.util.logging.config.file=/var/jenkins_home/log.properties"
-ENV JENKINS_OPTS="--prefix=/jenkins"
+ENV JAVA_OPTS="-Djenkins.install.runSetupWizard=false -Djava.util.logging.config.file=/var/jenkins_home/log.properties" \
+    JENKINS_OPTS="--prefix=/jenkins" \
+    JENKINS_UC=https://updates.jenkins.io \
+    JENKINS_UC_DOWNLOAD=https://updates.jenkins.io/download \
+    JENKINS_PLUGIN_INFO=https://updates.jenkins.io/plugin-versions.json
 
-COPY security.groovy /usr/share/jenkins/ref/init.groovy.d/security.groovy
-COPY plugins.txt /usr/share/jenkins/ref/plugins.txt
+# .override ensures the script is refreshed in an existing JENKINS_HOME volume on redeploy.
+COPY --chown=jenkins:jenkins security.groovy /usr/share/jenkins/ref/init.groovy.d/security.groovy.override
+COPY --chown=jenkins:jenkins plugins.txt /usr/share/jenkins/ref/plugins.txt
 RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt

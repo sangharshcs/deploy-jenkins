@@ -1,27 +1,33 @@
 FROM ubuntu:24.04
 
-RUN apt-get update && \
+ARG DOCKER_VERSION=29.5.3
+ARG TARGETARCH=amd64
+
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64)   DOCKER_ARCH=x86_64   ;; \
+      arm64)   DOCKER_ARCH=aarch64  ;; \
+      *) echo "Unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
       python3 \
-      lsb-release \
-      docker.io \
+      curl \
       wget \
-      openjdk-17-jre-headless \
+      openjdk-21-jre-headless \
       ca-certificates && \
+    curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_VERSION}.tgz" \
+      | tar -xz --strip-components=1 -C /usr/local/bin docker/docker && \
     rm -rf /var/lib/apt/lists/*
 
 ARG user=jenkins
 
 ENV HOME=/home/${user}
-RUN set -eux; \
-    if ! id -u "${user}" >/dev/null 2>&1; then \
-      useradd -c "Jenkins user" -d "$HOME" -G docker -m "${user}"; \
-    fi
 
-COPY start.sh ${HOME}/
-RUN chown "${user}:${user}" ${HOME}/start.sh && chmod 750 ${HOME}/start.sh
+RUN useradd -c "Jenkins user" -d "$HOME" -m "${user}"
+COPY --chown=${user}:${user} --chmod=750 start.sh ${HOME}/start.sh
 
 USER ${user}
-WORKDIR /home/${user}
+WORKDIR ${HOME}
 
-CMD ["/home/jenkins/start.sh"]
+CMD ["./start.sh"]
