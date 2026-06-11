@@ -1,27 +1,16 @@
-FROM ubuntu:24.04
+FROM eclipse-temurin:21-jre-ubi10-minimal
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      python3 \
-      lsb-release \
-      docker.io \
-      wget \
-      openjdk-17-jre-headless \
-      ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+RUN microdnf install -y wget && \
+    microdnf clean all
 
 ARG user=jenkins
 
 ENV HOME=/home/${user}
-RUN set -eux; \
-    if ! id -u "${user}" >/dev/null 2>&1; then \
-      useradd -c "Jenkins user" -d "$HOME" -G docker -m "${user}"; \
-    fi
+RUN useradd -c "Jenkins user" -d "$HOME" -m "${user}"
 
-COPY start.sh ${HOME}/
-RUN chown "${user}:${user}" ${HOME}/start.sh && chmod 750 ${HOME}/start.sh
+COPY --chown=${user}:${user} --chmod=750 start.sh ${HOME}/start.sh
 
 USER ${user}
 WORKDIR /home/${user}
 
-CMD ["/home/jenkins/start.sh"]
+CMD ["./start.sh"]
