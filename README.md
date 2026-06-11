@@ -248,7 +248,7 @@ deploy-jenkins/
 |---|---|
 | `./scripts/deploy.sh` | Full deploy: build → secrets → stack deploy |
 | `./scripts/deploy.sh --skip-build` | Deploy without rebuilding images |
-| `./scripts/stop.sh` | Stop and remove all Jenkins services |
+| `./scripts/stop.sh` | Stop stack and remove Docker secrets |
 | `docker service scale jenkins_worker=N` | Scale workers up or down |
 | `docker service logs -f jenkins_controller` | Tail controller logs |
 | `docker service logs -f jenkins_worker` | Tail worker logs |
@@ -359,15 +359,13 @@ Look for `RetryException`, `HTTP response code: 403`, or `SEVERE:` — these ind
 
 **Stale secrets from a previous deploy?**
 ```bash
-./scripts/stop.sh
-docker secret rm jenkins-user jenkins-pass 2>/dev/null || true
+./scripts/stop.sh   # removes stack and Docker secrets
 ./scripts/deploy.sh
 ```
 
 **Start completely fresh?**
 ```bash
-./scripts/stop.sh
-docker secret rm jenkins-user jenkins-pass 2>/dev/null || true
+./scripts/stop.sh   # removes stack and Docker secrets
 ./scripts/deploy.sh
 ```
 

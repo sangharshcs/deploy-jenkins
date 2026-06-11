@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1 - 2026-06-10
+
+- Fixed `security.groovy` bootstrap failure caused by an incorrect `DefaultCrumbIssuer` import (`jenkins.security.csrf` → `hudson.security.csrf`), which left Jenkins unsecured on startup
+- Ship `security.groovy` as `security.groovy.override` so existing `JENKINS_HOME` volumes pick up the fix on redeploy
+- CI smoke test now asserts `useSecurity=true` after controller startup
+
 ## 1.1.0 - 2026-06-10
 
 - Replaced fragmented shell scripts (`common.sh`, `build.sh`, `logs.sh`, `push.sh`, `stop.sh`)

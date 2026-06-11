@@ -92,6 +92,28 @@ jobs:
 
           curl -fsS -o /dev/null http://127.0.0.1:18080/jenkins/login
 
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import sys
+          import urllib.request
+
+          user = os.environ["JENKINS_USER"]
+          password = os.environ["JENKINS_PASS"]
+          token = base64.b64encode(f"{user}:{password}".encode()).decode()
+          req = urllib.request.Request(
+              "http://127.0.0.1:18080/jenkins/api/json",
+              headers={"Authorization": f"Basic {token}"},
+          )
+          with urllib.request.urlopen(req) as resp:
+              payload = json.load(resp)
+          if not payload.get("useSecurity"):
+              print("Jenkins security bootstrap failed: useSecurity is false")
+              sys.exit(1)
+          print("Jenkins security bootstrap verified")
+          PY
+
           docker run -d \
             --name jenkins-worker-ci \
             --network "${TEST_NETWORK}" \

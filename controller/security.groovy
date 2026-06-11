@@ -2,7 +2,7 @@
  
 import jenkins.model.*
 import hudson.security.*
-import jenkins.security.csrf.DefaultCrumbIssuer
+import hudson.security.csrf.DefaultCrumbIssuer
  
 def instance = Jenkins.getInstance()
  

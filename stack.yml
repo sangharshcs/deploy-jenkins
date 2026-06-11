@@ -29,7 +29,6 @@ services:
       - SWARM_WEBSOCKET=${SWARM_WEBSOCKET:-true}
     volumes:
       - "${WORKER_ROOT:-/opt/worker_home}:${WORKER_ROOT:-/opt/worker_home}"
-      - "/var/run/docker.sock:/var/run/docker.sock"
     secrets:
       - jenkins-user
       - jenkins-pass

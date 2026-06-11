@@ -6,6 +6,7 @@ ENV JAVA_OPTS="-Djenkins.install.runSetupWizard=false -Djava.util.logging.config
     JENKINS_UC_DOWNLOAD=https://updates.jenkins.io/download \
     JENKINS_PLUGIN_INFO=https://updates.jenkins.io/plugin-versions.json
 
-COPY --chown=jenkins:jenkins security.groovy /usr/share/jenkins/ref/init.groovy.d/security.groovy
+# .override ensures the script is refreshed in an existing JENKINS_HOME volume on redeploy.
+COPY --chown=jenkins:jenkins security.groovy /usr/share/jenkins/ref/init.groovy.d/security.groovy.override
 COPY --chown=jenkins:jenkins plugins.txt /usr/share/jenkins/ref/plugins.txt
 RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt
