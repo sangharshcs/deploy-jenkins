@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.2 - 2026-06-11
+
+- Switch worker base image from `eclipse-temurin:21-jre-ubi10-minimal` to `ubuntu:24.04` with openjdk-21 and static Docker CLI
+- Add multi-arch support to worker Dockerfile via `TARGETARCH` ARG (`amd64` / `arm64`)
+- Add Docker socket mount and `user: root` to worker in `stack.yml` to enable Docker-in-Docker for build jobs
+- Pin swarm plugin to `swarm:3.51` in `plugins.txt` for reproducible controller builds
+- Add guard in `security.groovy` to fail fast on empty secrets
+- Fix missing trailing newlines in `controller/Dockerfile`, `controller/plugins.txt`, `scripts/stop.sh`, `worker/Dockerfile`
+- Fix `worker/start.sh` shebang to `#!/usr/bin/env bash` for portability
+- Update VERSION to `1.1.2`; correct README JDK17 → JDK21 badge and architecture diagram
+- Fix hardcoded port `8080` in `AGENTS.md` validation URL to `${UI_PORT:-8080}`
+
 ## 1.1.1 - 2026-06-10
 
 - Fixed `security.groovy` bootstrap failure caused by an incorrect `DefaultCrumbIssuer` import (`jenkins.security.csrf` → `hudson.security.csrf`), which left Jenkins unsecured on startup

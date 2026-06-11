@@ -49,3 +49,4 @@ fi
 
 echo "Stack '${STACK_NAME}' is not running."
 remove_secrets
+exit 0

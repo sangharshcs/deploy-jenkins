@@ -68,7 +68,7 @@ Run and verify:
 
 1. `./scripts/deploy.sh`
 2. Jenkins UI is reachable at:
-   - `${JENKINS_URL_SCHEME}://${JENKINS_SERVER_IP}:8080/jenkins`
+   - `${JENKINS_URL_SCHEME}://${JENKINS_SERVER_IP}:${UI_PORT:-8080}/jenkins`
 3. Check logs immediately after startup:
    - `docker service logs --tail 50 jenkins_controller`
    - `docker service logs --tail 50 jenkins_worker`

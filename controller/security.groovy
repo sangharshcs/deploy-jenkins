@@ -1,14 +1,16 @@
 #!groovy
- 
+
 import jenkins.model.*
 import hudson.security.*
 import hudson.security.csrf.DefaultCrumbIssuer
- 
+
 def instance = Jenkins.getInstance()
- 
+
 def user = new File("/run/secrets/jenkins-user").text.trim()
 def pass = new File("/run/secrets/jenkins-pass").text.trim()
- 
+
+if (!user || !pass) { throw new IllegalStateException("Jenkins secrets are empty") }
+
 def hudsonRealm = new HudsonPrivateSecurityRealm(false)
 if (hudsonRealm.getUser(user) == null) {
   hudsonRealm.createAccount(user, pass)
