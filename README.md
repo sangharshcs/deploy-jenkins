@@ -1,3 +1,4 @@
+
 <div align="center">
 
 # deploy-jenkins
@@ -226,7 +227,7 @@ deploy-jenkins/
 │   └── plugins.txt              # swarm only
 │
 ├── worker/
-│   ├── Dockerfile               # ubuntu:24.04 + openjdk-17
+│   ├── Dockerfile               # ubuntu:24.04 + openjdk-21
 │   └── start.sh                 # Auto-discovery entrypoint
 │
 ├── scripts/
