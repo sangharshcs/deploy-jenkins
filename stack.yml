@@ -14,13 +14,21 @@ services:
     secrets:
       - jenkins-user
       - jenkins-pass
+      - agent-user
+      - agent-pass
     deploy:
       replicas: 1
       restart_policy:
         condition: on-failure
+      placement:
+        # On a single-node Swarm this constraint is always satisfied.
+        # On multi-node it restricts scheduling to any manager node, not one
+        # specific host.  Use a node label (node.labels.jenkins==controller)
+        # to pin to one machine when using a local bind mount.
+        # With shared storage (NFS/EFS) this constraint is unnecessary.
+        constraints: ["node.role == manager"]
 
   worker:
-    user: root
     image: ${WORKER_IMAGE:?WORKER_IMAGE must be set — run via deploy.sh or export it first}
     environment:
       - JENKINS_CONTROLLER_URL=${JENKINS_CONTROLLER_URL:?JENKINS_CONTROLLER_URL must be set — run via deploy.sh or export it first}
@@ -30,10 +38,19 @@ services:
       - SWARM_WEBSOCKET=${SWARM_WEBSOCKET:-true}
     volumes:
       - "${WORKER_ROOT:-/opt/worker_home}:${WORKER_ROOT:-/opt/worker_home}"
-      - "/var/run/docker.sock:/var/run/docker.sock"
+      # Docker socket is NOT mounted by default.
+      # To enable Docker builds, add the line below and understand the risk:
+      #   - "/var/run/docker.sock:/var/run/docker.sock"
+      # WARNING: workers run as root. Mounting the socket gives every build job
+      # full control of the host Docker daemon — it can start privileged
+      # containers, read host filesystem paths, and reach any secret accessible
+      # on the host, including the controller's Jenkins home.  The separate
+      # agent Jenkins account does not limit what a build job can do once it
+      # has a root shell and a Docker socket.
     secrets:
-      - jenkins-user
-      - jenkins-pass
+      # Workers receive only the dedicated agent account — never the admin secret.
+      - agent-user
+      - agent-pass
     deploy:
       replicas: ${WORKER_REPLICAS:-1}
       # Retry window (~100s) must exceed controller start_period (60s) + one healthcheck interval (30s).
@@ -47,4 +64,8 @@ secrets:
   jenkins-user:
     external: true
   jenkins-pass:
+    external: true
+  agent-user:
+    external: true
+  agent-pass:
     external: true

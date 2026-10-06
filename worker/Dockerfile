@@ -20,14 +20,8 @@ RUN set -eux; \
       | tar -xz --strip-components=1 -C /usr/local/bin docker/docker && \
     rm -rf /var/lib/apt/lists/*
 
-ARG user=jenkins
+# Runs as root so that build jobs can reach /var/run/docker.sock without
+# host-side group configuration.  See README §Security for the implications.
+COPY --chmod=750 start.sh /start.sh
 
-ENV HOME=/home/${user}
-
-RUN useradd -c "Jenkins user" -d "$HOME" -m "${user}"
-COPY --chown=${user}:${user} --chmod=750 start.sh ${HOME}/start.sh
-
-USER ${user}
-WORKDIR ${HOME}
-
-CMD ["./start.sh"]
+CMD ["/start.sh"]

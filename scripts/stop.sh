@@ -9,7 +9,7 @@ set -euo pipefail
 
 STACK_NAME="${STACK_NAME:-jenkins}"
 WAIT_SECONDS="${WAIT_SECONDS:-60}"
-SECRETS=(jenkins-user jenkins-pass)
+SECRETS=(jenkins-user jenkins-pass agent-user agent-pass)
 
 stack_exists() {
   docker stack ls --format '{{.Name}}' | grep -qx "${STACK_NAME}"
