@@ -2,21 +2,21 @@
 
 set -euo pipefail
 
-JAR_PATH="/home/jenkins/swarm-client.jar"
-USER_SECRET_FILE="/run/secrets/jenkins-user"
-PASS_SECRET_FILE="/run/secrets/jenkins-pass"
+JAR_PATH="/opt/swarm-client.jar"
+USER_SECRET_FILE="/run/secrets/agent-user"
+PASS_SECRET_FILE="/run/secrets/agent-pass"
 SWARM_LABELS="${SWARM_LABELS:-swarm docker}"
 SWARM_EXECUTORS="${SWARM_EXECUTORS:-5}"
-JENKINS_CONTROLLER_URL="${JENKINS_CONTROLLER_URL:-${J_MASTER:-}}"
+JENKINS_CONTROLLER_URL="${JENKINS_CONTROLLER_URL:-}"
 if [[ -z "${JENKINS_CONTROLLER_URL}" ]]; then
-  echo "Missing JENKINS_CONTROLLER_URL"
+  echo "Missing JENKINS_CONTROLLER_URL" >&2
   exit 1
 fi
 JENKINS_URL="${JENKINS_CONTROLLER_URL%/}/"
-WORKER_ROOT="${WORKER_ROOT:-/tmp/worker_home}"
+WORKER_ROOT="${WORKER_ROOT:-/opt/worker_home}"
 
 if [[ ! -s "${USER_SECRET_FILE}" || ! -s "${PASS_SECRET_FILE}" ]]; then
-  echo "Missing Jenkins credentials secrets in /run/secrets"
+  echo "Missing agent credential secrets in /run/secrets" >&2
   exit 1
 fi
 

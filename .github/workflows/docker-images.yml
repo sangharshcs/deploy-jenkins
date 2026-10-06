@@ -8,6 +8,9 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    # NOTE: workflow_dispatch allows publishing from any branch when the
+    # push job's `if` guard passes (github.event_name != 'pull_request').
+    # Restrict to main if publishing from feature branches is undesirable.
 
 permissions:
   contents: read
@@ -18,7 +21,9 @@ jobs:
     env:
       JENKINS_SERVER_IP: 127.0.0.1
       JENKINS_USER: ci-admin
-      JENKINS_PASS: ci-pass
+      JENKINS_PASS: ci-admin-pass
+      AGENT_USER: ci-agent
+      AGENT_PASS: ci-agent-pass
     outputs:
       controller_image_repo: ${{ steps.resolve.outputs.controller_image_repo }}
       worker_image_repo: ${{ steps.resolve.outputs.worker_image_repo }}
@@ -53,7 +58,7 @@ jobs:
           docker build --no-cache -t "${CONTROLLER_IMAGE_REPO}:${DEPLOY_TAG}" controller
           docker build -t "${WORKER_IMAGE_REPO}:${DEPLOY_TAG}" worker
 
-      - name: Smoke test controller and worker connectivity
+      - name: Smoke test — controller + worker connectivity and privilege isolation
         run: |
           set -euo pipefail
 
@@ -70,17 +75,23 @@ jobs:
           }
           trap cleanup EXIT
 
+          # Write all four credential files
           printf "%s" "${JENKINS_USER}" > "${TEST_TMP_DIR}/jenkins-user"
           printf "%s" "${JENKINS_PASS}" > "${TEST_TMP_DIR}/jenkins-pass"
+          printf "%s" "${AGENT_USER}"   > "${TEST_TMP_DIR}/agent-user"
+          printf "%s" "${AGENT_PASS}"   > "${TEST_TMP_DIR}/agent-pass"
 
           docker network create "${TEST_NETWORK}" >/dev/null
 
+          # Controller receives admin + agent secrets (security.groovy creates both accounts)
           docker run -d \
             --name jenkins-controller-ci \
             --network "${TEST_NETWORK}" \
             -p 18080:8080 \
             -v "${TEST_TMP_DIR}/jenkins-user:/run/secrets/jenkins-user:ro" \
             -v "${TEST_TMP_DIR}/jenkins-pass:/run/secrets/jenkins-pass:ro" \
+            -v "${TEST_TMP_DIR}/agent-user:/run/secrets/agent-user:ro" \
+            -v "${TEST_TMP_DIR}/agent-pass:/run/secrets/agent-pass:ro" \
             "${CONTROLLER_IMAGE}" >/dev/null
 
           for _ in {1..60}; do
@@ -92,49 +103,27 @@ jobs:
 
           curl -fsS -o /dev/null http://127.0.0.1:18080/jenkins/login
 
-          python3 - <<'PY'
-          import base64
-          import json
-          import os
-          import sys
-          import urllib.request
-
-          user = os.environ["JENKINS_USER"]
-          password = os.environ["JENKINS_PASS"]
-          token = base64.b64encode(f"{user}:{password}".encode()).decode()
-          req = urllib.request.Request(
-              "http://127.0.0.1:18080/jenkins/api/json",
-              headers={"Authorization": f"Basic {token}"},
-          )
-          with urllib.request.urlopen(req) as resp:
-              payload = json.load(resp)
-          if not payload.get("useSecurity"):
-              print("Jenkins security bootstrap failed: useSecurity is false")
-              sys.exit(1)
-          print("Jenkins security bootstrap verified")
-          PY
-
+          # Worker receives only the agent secrets — never the admin password.
+          # Worker runs as root; no docker.sock is mounted in CI.
           docker run -d \
             --name jenkins-worker-ci \
             --network "${TEST_NETWORK}" \
             -e "JENKINS_CONTROLLER_URL=http://jenkins-controller-ci:8080/jenkins" \
             -e "WORKER_ROOT=/tmp/jenkins_worker_home_ci" \
-            -v "${TEST_TMP_DIR}/jenkins-user:/run/secrets/jenkins-user:ro" \
-            -v "${TEST_TMP_DIR}/jenkins-pass:/run/secrets/jenkins-pass:ro" \
+            -v "${TEST_TMP_DIR}/agent-user:/run/secrets/agent-user:ro" \
+            -v "${TEST_TMP_DIR}/agent-pass:/run/secrets/agent-pass:ro" \
             "${WORKER_IMAGE}" >/dev/null
 
           connected=0
           for _ in {1..24}; do
             logs="$(docker logs jenkins-worker-ci 2>&1 || true)"
-            if echo "${logs}" | awk '/RetryException|HTTP response code: 403|SEVERE:/{exit 10}'; then
-              :
-            else
+            if echo "${logs}" | grep -qE 'RetryException|HTTP response code: 403|SEVERE:'; then
               echo "Worker startup failure detected:"
               echo "${logs}"
               exit 1
             fi
 
-            if echo "${logs}" | awk '/Connected/{found=1} END{exit(found?0:1)}'; then
+            if echo "${logs}" | grep -q 'Connected'; then
               connected=1
               break
             fi
@@ -147,6 +136,7 @@ jobs:
             exit 1
           fi
 
+          # Assert at least the built-in node and one connected worker
           curl -fsS -u "${JENKINS_USER}:${JENKINS_PASS}" \
             "http://127.0.0.1:18080/jenkins/computer/api/json?pretty=true" > "${TEST_TMP_DIR}/nodes.json"
 
@@ -160,6 +150,29 @@ jobs:
               sys.exit(1)
           print(f"Smoke test passed with nodes: {names}")
           PY
+
+          # Admin access check: admin account must be able to reach /manage
+          # Use -L to follow the redirect from /manage to /manage/
+          HTTP_ADMIN="$(curl -s -o /dev/null -w "%{http_code}" -L \
+            -u "${JENKINS_USER}:${JENKINS_PASS}" \
+            "http://127.0.0.1:18080/jenkins/manage")"
+          if [[ "${HTTP_ADMIN}" != "200" ]]; then
+            echo "FAIL: admin account cannot access /manage (HTTP ${HTTP_ADMIN})" >&2
+            exit 1
+          fi
+          echo "Admin access OK: /manage returned HTTP ${HTTP_ADMIN}"
+
+          # Privilege isolation check: the agent account must be denied access
+          # to /manage (Overall/Administer required).  Jenkins returns 403 for
+          # an authenticated user who lacks the permission.
+          HTTP_AGENT="$(curl -s -o /dev/null -w "%{http_code}" -L \
+            -u "${AGENT_USER}:${AGENT_PASS}" \
+            "http://127.0.0.1:18080/jenkins/manage")"
+          if [[ "${HTTP_AGENT}" != "403" ]]; then
+            echo "FAIL: expected HTTP 403 for agent /manage, got ${HTTP_AGENT}" >&2
+            exit 1
+          fi
+          echo "Privilege isolation OK: agent /manage returned HTTP ${HTTP_AGENT}"
 
       - name: Save tested images
         run: |
@@ -182,10 +195,6 @@ jobs:
     if: github.event_name != 'pull_request'
     steps:
       - name: Resolve release tag
-        env:
-          NAMESPACE_OVERRIDE: ${{ vars.DOCKERHUB_NAMESPACE }}
-          CONTROLLER_IMAGE_REPO_OVERRIDE: ${{ vars.CONTROLLER_IMAGE_REPO }}
-          WORKER_IMAGE_REPO_OVERRIDE: ${{ vars.WORKER_IMAGE_REPO }}
         run: |
           set -euo pipefail
           echo "CONTROLLER_IMAGE_REPO=${{ needs.build-and-smoke-test.outputs.controller_image_repo }}" >> "${GITHUB_ENV}"
