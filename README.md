@@ -312,6 +312,12 @@ deploy-jenkins/
 
 > **Local Docker Desktop:** if `JENKINS_SERVER_IP` is `127.0.0.1` or `localhost`, workers automatically target `host.docker.internal` so they can reach the controller from inside the Swarm overlay network.
 
+> **`CONTROLLER_ROOT` permissions:** `deploy.sh` creates this directory and verifies that Jenkins (UID 1000) can write to it. If the check fails, make the directory writable by UID 1000 before deploying:
+> ```bash
+> sudo chown 1000 "${CONTROLLER_ROOT}"
+> ```
+> Avoid `chown -R` on an existing Jenkins home — it may corrupt files owned by other UIDs inside the volume.
+
 ---
 
 ## CI/CD
@@ -376,6 +382,13 @@ The push job loads the exact images that passed the smoke test — it does not r
 ---
 
 ## Troubleshooting
+
+**`deploy.sh` fails with "Jenkins (UID 1000) cannot write to CONTROLLER_ROOT":**  
+`deploy.sh` creates the directory and runs a write-access check using the controller image. If the current user owns the directory and it was created with mode 750, UID 1000 has no write access. Fix:
+```bash
+sudo chown 1000 "${CONTROLLER_ROOT:-/opt/jenkins_home}"
+```
+Avoid `chown -R` on an existing Jenkins home — it may corrupt files owned by other UIDs inside the volume.
 
 **Controller not starting?**
 ```bash

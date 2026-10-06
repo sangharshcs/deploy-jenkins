@@ -71,6 +71,26 @@ fi
 mkdir -p "${CONTROLLER_ROOT}"
 chmod 750 "${CONTROLLER_ROOT}"
 
+# Verify Jenkins (UID 1000) can write to the controller home before deploying.
+# chmod 750 on a directory owned by another user leaves UID 1000 with no write
+# access on a native Linux Docker host.  We test using the actual controller
+# image so the check reflects the real runtime user.
+# Note: Docker Desktop (macOS/Windows) with VirtioFS bypasses host permission
+# enforcement — the check always passes there, consistent with the container
+# also being able to write at runtime.
+if ! docker run --rm --user 1000:1000 \
+    --entrypoint sh \
+    -v "${CONTROLLER_ROOT}:/var/jenkins_home" \
+    "${CONTROLLER_IMAGE}" \
+    -c "test -w /var/jenkins_home" >/dev/null 2>&1; then
+  echo "ERROR: Jenkins (UID 1000) cannot write to CONTROLLER_ROOT=${CONTROLLER_ROOT}." >&2
+  echo "       Make the directory writable by UID 1000 before deploying:" >&2
+  echo "         sudo chown 1000 \"${CONTROLLER_ROOT}\"" >&2
+  echo "       Avoid chown -R on an existing Jenkins home — it may corrupt" >&2
+  echo "       files owned by other UIDs inside the volume." >&2
+  exit 1
+fi
+
 # Create secrets if they don't exist.
 # To rotate a secret: run stop.sh first (which removes secrets), then deploy.sh.
 for secret in jenkins-user jenkins-pass agent-user agent-pass; do
