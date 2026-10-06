@@ -312,11 +312,11 @@ deploy-jenkins/
 
 > **Local Docker Desktop:** if `JENKINS_SERVER_IP` is `127.0.0.1` or `localhost`, workers automatically target `host.docker.internal` so they can reach the controller from inside the Swarm overlay network.
 
-> **`CONTROLLER_ROOT` permissions:** `deploy.sh` creates this directory and verifies that Jenkins (UID 1000) can write to it. If the check fails, make the directory writable by UID 1000 before deploying:
+> **`CONTROLLER_ROOT` permissions:** `deploy.sh` creates this directory and verifies that Jenkins (UID 1000) can write to it. If the check fails, the error message prints the actual path. Make that directory writable by UID 1000 before redeploying. Using the `.env.example` default path as the example:
 > ```bash
-> sudo chown 1000 "${CONTROLLER_ROOT}"
+> sudo chown 1000 /tmp/jenkins_home
 > ```
-> Avoid `chown -R` on an existing Jenkins home — it may corrupt files owned by other UIDs inside the volume.
+> Replace `/tmp/jenkins_home` with the path shown in the error message. Avoid `chown -R` on an existing Jenkins home — it may corrupt files owned by other UIDs inside the volume.
 
 ---
 
@@ -384,9 +384,9 @@ The push job loads the exact images that passed the smoke test — it does not r
 ## Troubleshooting
 
 **`deploy.sh` fails with "Jenkins (UID 1000) cannot write to CONTROLLER_ROOT":**  
-`deploy.sh` creates the directory and runs a write-access check using the controller image. If the current user owns the directory and it was created with mode 750, UID 1000 has no write access. Fix:
+`deploy.sh` creates the directory and runs a write-access check using the controller image. If the current user owns the directory and it was created with mode 750, UID 1000 has no write access. The error message prints the actual path — use that path in the fix:
 ```bash
-sudo chown 1000 "${CONTROLLER_ROOT:-/opt/jenkins_home}"
+sudo chown 1000 /tmp/jenkins_home   # replace with the path in the error message
 ```
 Avoid `chown -R` on an existing Jenkins home — it may corrupt files owned by other UIDs inside the volume.
 
