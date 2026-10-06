@@ -3,7 +3,7 @@
 
 # deploy-jenkins
 
-**Single-node Jenkins on Docker Swarm — workers find the controller themselves.**
+**Single-node Jenkins on Docker Swarm — workers register themselves automatically.**
 
 [![CI](https://github.com/sangharshcs/deploy-jenkins/actions/workflows/docker-images.yml/badge.svg)](https://github.com/sangharshcs/deploy-jenkins/actions/workflows/docker-images.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -11,7 +11,7 @@
 [![Docker Swarm](https://img.shields.io/badge/Orchestration-Docker%20Swarm-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/engine/swarm/)
 [![Ubuntu 24.04](https://img.shields.io/badge/Worker%20Base-Ubuntu%2024.04-E95420?logo=ubuntu&logoColor=white)](https://hub.docker.com/_/ubuntu)
 
-A runnable single-node demo. Workers register and deregister themselves — no manual node configuration.  
+A runnable single-node demo. Workers register themselves on startup — no manual node configuration.  
 Adapt it to your own environment; production considerations are called out explicitly.
 
 [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Scaling](#scaling-workers) · [HTTPS](#https) · [Configuration](#configuration-reference) · [Security](#security) · [CI/CD](#cicd)
@@ -79,7 +79,7 @@ flowchart TB
 ## Features
 
 - **Zero-touch node registration** — workers self-register; no XML, no UI clicks, no Groovy after the initial bootstrap
-- **Elastic capacity** — `docker service scale jenkins_worker=N` updates the node list in real time
+- **Elastic capacity** — `docker service scale jenkins_worker=N` adds or removes build capacity; new replicas come online automatically
 - **Separate admin and agent credentials** — workers log in as a dedicated account with only the permissions the Swarm plugin needs; the admin password is a controller-only secret
 - **Matrix Authorization** — `GlobalMatrixAuthorizationStrategy` per identity; no blanket full-control-once-logged-in
 - **Secrets-first** — all credentials in Docker secrets at `/run/secrets/`; never environment variables
@@ -189,11 +189,35 @@ docker service scale jenkins_worker=1
 docker service scale jenkins_worker=0
 ```
 
-**Scale-down behaviour:** when Docker Swarm stops a replica, the `swarm-client` process receives SIGTERM and attempts to deregister. In testing on a single node, the node goes offline in Jenkins within a few seconds of the container stopping. However, if a build is running on that replica when SIGTERM arrives, the build may be marked as failed or aborted depending on Jenkins' in-progress build handling — there is no guaranteed graceful drain. Scale down one replica at a time and verify the node is idle before reducing capacity if build continuity matters.
+**Scale-down behaviour:** when Docker Swarm stops a replica, the `swarm-client` process receives SIGTERM and calls the Jenkins disconnect API before exiting. In an idle-worker test (5 replicas scaled to 1, no active builds), the removed workers appeared as offline nodes in the Jenkins node list immediately after the scale command. Whether those offline entries are eventually cleaned up by Jenkins — and how quickly — was not recorded; the available screenshot is a single point in time. Do not treat an offline entry as permanent.
+
+If a build is running on the stopped replica when SIGTERM arrives, the build may be marked as failed or aborted. **This scenario has not been tested.** Scale down one replica at a time and verify the node is idle before reducing capacity if build continuity matters. See [Testing scale-down with an active build](#testing-scale-down-with-an-active-build) for a reproducible test procedure.
 
 **Scale-down is not tested in CI.** The smoke test runs plain `docker run` containers, not a Swarm stack.
 
 **Workspace lifecycle:** scaling down discards the removed replicas' workspaces. Scaling up creates fresh, separate workspaces. Do not rely on the worker filesystem as a persistent build cache.
+
+### Testing scale-down with an active build
+
+> **UNTESTED** — this procedure has not been run. Results are unknown. If you run it, record your findings and submit them as an issue or PR.
+
+**Prerequisites:** a running deployment with at least two worker replicas.
+
+1. In Jenkins, create a **Freestyle** job (no Pipeline plugin required):
+   - Add an **Execute shell** build step: `echo "NODE_NAME=$NODE_NAME"; sleep 180`
+2. Scale workers to 5: `docker service scale jenkins_worker=5`
+3. Wait for all 5 workers to appear online in **Manage Jenkins → Nodes**.
+4. Trigger the job. Note which worker it runs on (the `NODE_NAME` value in the console output, visible before `sleep` starts).
+5. While the build is running on that worker, scale to 1:
+   ```bash
+   docker service scale jenkins_worker=1
+   ```
+   If Docker Swarm stops the replica that the build is running on, proceed to step 6. If the build lands on the replica that survives, the test is inconclusive — scale back to 5 and repeat from step 3.
+6. Record:
+   - Whether the Swarm replica for that worker exits cleanly (`docker service ps jenkins_worker`).
+   - The build's final status in Jenkins (Aborted? Failed? Still running?).
+   - The node's state in **Manage Jenkins → Nodes** immediately after and ~60 seconds later.
+   - Relevant logs: `docker service logs --tail 100 jenkins_worker`
 
 ---
 
@@ -403,11 +427,12 @@ docker service logs --tail 100 jenkins_worker
 Look for `RetryException`, `HTTP response code: 403`, or `SEVERE:`. A 403 usually means the agent account is missing a permission or the credentials don't match.
 
 **Worker restart policy exhausted:**  
-If the controller takes more than ~100 s to pass its healthcheck, workers exhaust retries before connecting. Scale them back up:
+Workers retry on failure up to `max_attempts: 10` times with `delay: 10s` between each attempt (100 s total). If the controller is not reachable within that window — for example because it takes longer than 100 s to pass its own healthcheck — workers stop retrying and go into a `shutdown` state. Reset the retry counter by cycling replicas:
 ```bash
 docker service scale jenkins_worker=0
 docker service scale jenkins_worker="${WORKER_REPLICAS:-1}"
 ```
+The controller healthcheck is configured with `start_period: 60s`, `interval: 30s`, `retries: 5` (`stack.yml`). In a worst case the controller takes up to 210 s (60 + 5 × 30) to pass; increase `max_attempts` or `delay` in `stack.yml` if your host is slow to start.
 
 **Stale secrets:**
 ```bash
