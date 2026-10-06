@@ -38,7 +38,7 @@ Optional:
 
 - `JENKINS_CONTROLLER_URL` — explicit URL workers use to reach the controller; set this when TLS terminates on an external proxy at a different port/hostname
 - `UI_PORT` (defaults to `8080`)
-- `CONTROLLER_ROOT`, `WORKER_ROOT`
+- `CONTROLLER_ROOT` (persistent host path), `WORKER_ROOT` (per-container path)
 - `DOCKERHUB_NAMESPACE`
 - `CONTROLLER_IMAGE_REPO`, `WORKER_IMAGE_REPO`
 - `WORKER_REPLICAS`
@@ -47,7 +47,7 @@ Optional:
 - `DEPLOY_TAG`
 
 > To expose the JNLP agent port (`50000`), add it directly to the controller's `ports` section in `stack.yml`.
-> The Docker socket is not mounted by default. To enable Docker builds, uncomment the socket mount in `stack.yml`; be aware this gives build jobs host-level Docker access and the agent Jenkins account does not limit what a build job can do with a root shell and a Docker socket.
+> Worker workspaces are ephemeral and isolated per replica. To enable Docker builds, add the documented socket mount in `stack.yml`; be aware this gives build jobs host-level Docker access and the agent Jenkins account does not limit what a build job can do with a root shell and a Docker socket.
 
 ## Security invariants (do not violate)
 

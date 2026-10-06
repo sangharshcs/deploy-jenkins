@@ -36,17 +36,14 @@ services:
       - SWARM_EXECUTORS=${SWARM_EXECUTORS:-5}
       - SWARM_LABELS=${SWARM_LABELS:-swarm docker}
       - SWARM_WEBSOCKET=${SWARM_WEBSOCKET:-true}
-    volumes:
-      - "${WORKER_ROOT:-/opt/worker_home}:${WORKER_ROOT:-/opt/worker_home}"
-      # Docker socket is NOT mounted by default.
-      # To enable Docker builds, add the line below and understand the risk:
-      #   - "/var/run/docker.sock:/var/run/docker.sock"
-      # WARNING: workers run as root. Mounting the socket gives every build job
-      # full control of the host Docker daemon — it can start privileged
-      # containers, read host filesystem paths, and reach any secret accessible
-      # on the host, including the controller's Jenkins home.  The separate
-      # agent Jenkins account does not limit what a build job can do once it
-      # has a root shell and a Docker socket.
+    # Each replica keeps its workspace in its own container filesystem.
+    # Files are discarded when the replica is removed or replaced.
+    # For trusted Docker builds only, opt in to host Docker access by adding:
+    # volumes:
+    #   - "/var/run/docker.sock:/var/run/docker.sock"
+    # WARNING: workers run as root. With this mount, any build job can control
+    # the host Docker daemon, read host paths, and reach the controller's
+    # secrets. The agent Jenkins account does not restrict that access.
     secrets:
       # Workers receive only the dedicated agent account — never the admin secret.
       - agent-user

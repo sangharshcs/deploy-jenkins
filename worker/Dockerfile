@@ -20,8 +20,8 @@ RUN set -eux; \
       | tar -xz --strip-components=1 -C /usr/local/bin docker/docker && \
     rm -rf /var/lib/apt/lists/*
 
-# Runs as root so that build jobs can reach /var/run/docker.sock without
-# host-side group configuration.  See README §Security for the implications.
+# Runs as root to download the Swarm client into /opt at startup. Docker socket
+# access is opt-in; see README §Security before enabling it.
 COPY --chmod=750 start.sh /start.sh
 
 CMD ["/start.sh"]

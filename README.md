@@ -136,7 +136,7 @@ Builds both images, creates Docker secrets, and deploys the stack.
 http://<JENKINS_SERVER_IP>:8080/jenkins
 ```
 
-> **HTTP is for isolated local demos only.** Credentials and the downloaded swarm-client JAR both cross this connection unencrypted. See [HTTPS](#https) before exposing this to any network.
+> **HTTP is for isolated local demos only.** Credentials and the downloaded swarm-client JAR cross this connection unencrypted. `JENKINS_SERVER_IP=127.0.0.1` only sets the displayed URL and the workers' target; it does **not** bind Swarm's published port to loopback. The stack publishes port 8080 on the host. Restrict inbound access to that port at the host or network boundary and verify it is inaccessible from other machines. See [HTTPS](#https) for networked deployments.
 
 ---
 
@@ -170,6 +170,8 @@ sequenceDiagram
 
 `worker/start.sh` reads credentials from `/run/secrets/agent-*`, downloads `swarm-client.jar` from the controller if it isn't already present, and connects via WebSocket.
 
+Each worker replica keeps its workspace in its own container filesystem. Replicas cannot overwrite one another's workspace files, but those files are lost when a replica is removed or replaced. Publish build outputs as Jenkins artifacts or to external storage if they need to persist.
+
 **The worker container runs as root.** The Docker socket is **not** mounted by default. The Docker CLI is present in the image; to enable Docker builds, add the socket mount described in `stack.yml`. See [Security](#security) for what that entails.
 
 ---
@@ -190,6 +192,8 @@ docker service scale jenkins_worker=0
 **Scale-down behaviour:** when Docker Swarm stops a replica, the `swarm-client` process receives SIGTERM and attempts to deregister. In testing on a single node, the node goes offline in Jenkins within a few seconds of the container stopping. However, if a build is running on that replica when SIGTERM arrives, the build may be marked as failed or aborted depending on Jenkins' in-progress build handling — there is no guaranteed graceful drain. Scale down one replica at a time and verify the node is idle before reducing capacity if build continuity matters.
 
 **Scale-down is not tested in CI.** The smoke test runs plain `docker run` containers, not a Swarm stack.
+
+**Workspace lifecycle:** scaling down discards the removed replicas' workspaces. Scaling up creates fresh, separate workspaces. Do not rely on the worker filesystem as a persistent build cache.
 
 ---
 
@@ -289,15 +293,15 @@ deploy-jenkins/
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `JENKINS_SERVER_IP` | ✅ | — | Host IP for the Jenkins UI URL shown at the end of deploy |
+| `JENKINS_SERVER_IP` | ✅ | — | Address used in the displayed UI URL and derived worker URL; does not restrict the published port |
 | `JENKINS_USER` | ✅ | — | Admin username |
 | `JENKINS_PASS` | ✅ | — | Admin password |
 | `AGENT_USER` | ✅ | — | Dedicated agent account username |
 | `AGENT_PASS` | ✅ | — | Dedicated agent account password |
 | `JENKINS_CONTROLLER_URL` | | derived | Explicit URL workers use to reach the controller; set when TLS terminates on an external proxy |
-| `UI_PORT` | | `8080` | Controller internal port |
+| `UI_PORT` | | `8080` | Published host port for the controller (container port is 8080) |
 | `CONTROLLER_ROOT` | | `/opt/jenkins_home` | Host path for Jenkins data |
-| `WORKER_ROOT` | | `/opt/worker_home` | Host path for worker workspace |
+| `WORKER_ROOT` | | `/opt/worker_home` | Workspace path inside each worker container; ephemeral and isolated per replica |
 | `DOCKERHUB_NAMESPACE` | | `sangharshcs` | Docker Hub org/user for image names |
 | `WORKER_REPLICAS` | | `1` | Initial number of worker replicas |
 | `DEPLOY_TAG` | | `<version>-<timestamp>` | Override image tag |
@@ -363,8 +367,8 @@ The push job loads the exact images that passed the smoke test — it does not r
 | Secrets as source of truth | `security.groovy.override` runs on every container start and updates both accounts from mounted secrets |
 | Anonymous read disabled | Enforced in `security.groovy` |
 | CSRF protection | `DefaultCrumbIssuer(true)` set in `security.groovy` |
-| Worker runs as root | Root is required to write to the bind-mounted workspace without host-side UID alignment. The Docker CLI is installed in the image; the socket is **not** mounted by default |
-| Docker socket opt-in | To enable Docker builds, uncomment the socket mount in `stack.yml`. **This gives every build job full control of the host Docker daemon** — it can start privileged containers, read host paths, and reach any secret accessible to the Docker daemon, including the Jenkins home. The separate agent Jenkins account does not limit what a build job can do once it has a root shell and a Docker socket |
+| Worker runs as root | Startup downloads the Swarm client into `/opt`. Worker workspaces are isolated in their containers; the Docker socket is **not** mounted by default |
+| Docker socket opt-in | To enable Docker builds, add the socket mount shown in `stack.yml`. **This gives every build job full control of the host Docker daemon** — it can start privileged containers, read host paths, and reach any secret accessible to the Docker daemon, including the Jenkins home. The separate agent Jenkins account does not limit what a build job can do once it has a root shell and a Docker socket |
 | Controller placement | `node.role == manager` keeps the controller on a manager node. On a single-node Swarm this is always the only node. See [Single-node limitations](#single-node-limitations) for multi-node caveats |
 | Minimal plugin surface | Controller ships with `swarm` and `matrix-auth` only |
 | HTTP limitation | Default deployment is HTTP. Credentials and swarm-client JAR are unencrypted in transit. See [HTTPS](#https) for external proxy guidance |

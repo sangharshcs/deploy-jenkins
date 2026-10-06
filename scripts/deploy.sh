@@ -66,9 +66,10 @@ if [[ "${1:-}" != "--skip-build" ]]; then
   docker build -t "${WORKER_IMAGE}" "${ROOT_DIR}/worker"
 fi
 
-# Create host directories
-mkdir -p "${CONTROLLER_ROOT}" "${WORKER_ROOT}"
-chmod 750 "${CONTROLLER_ROOT}" "${WORKER_ROOT}"
+# The controller persists on the host. Worker workspaces stay inside their
+# individual containers so replicas cannot write to the same host directory.
+mkdir -p "${CONTROLLER_ROOT}"
+chmod 750 "${CONTROLLER_ROOT}"
 
 # Create secrets if they don't exist.
 # To rotate a secret: run stop.sh first (which removes secrets), then deploy.sh.
