@@ -134,7 +134,7 @@ sequenceDiagram
 
     S->>C: docker stack deploy (stack.yml)
     Note over C: security.groovy creates admin + agent accounts
-    Note over W: worker starts; failed starts are retried (up to 10 times)
+    Note over W: worker starts, failed starts are retried up to 10 times
 
     W->>C: GET /jenkins/swarm/swarm-client.jar
     C-->>W: swarm-client.jar
