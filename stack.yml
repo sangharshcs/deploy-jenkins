@@ -21,11 +21,7 @@ services:
       restart_policy:
         condition: on-failure
       placement:
-        # On a single-node Swarm this constraint is always satisfied.
-        # On multi-node it restricts scheduling to any manager node, not one
-        # specific host.  Use a node label (node.labels.jenkins==controller)
-        # to pin to one machine when using a local bind mount.
-        # With shared storage (NFS/EFS) this constraint is unnecessary.
+        # Does not pin the controller to one node on a multi-node cluster (see README).
         constraints: ["node.role == manager"]
 
   worker:
@@ -36,41 +32,18 @@ services:
       - SWARM_EXECUTORS=${SWARM_EXECUTORS:-5}
       - SWARM_LABELS=${SWARM_LABELS:-swarm docker}
       - SWARM_WEBSOCKET=${SWARM_WEBSOCKET:-true}
-    # Each replica keeps its workspace in its own container filesystem.
-    # Files are discarded when the replica is removed or replaced.
-    #
-    # --- If build jobs need extra packages ---
-    # Extend the worker image instead of running as root at runtime:
-    #   FROM <your-worker-image>
-    #   USER root
-    #   RUN apt-get update && apt-get install -y --no-install-recommends <pkg> && rm -rf /var/lib/apt/lists/*
-    #   USER jenkins
-    #
-    # --- If a trusted setup needs container root WITHOUT host Docker access ---
-    # Add only:
-    # user: root
-    # This gives the container process root inside the container only; the host
-    # is unaffected as long as no privileged mounts are added.
-    #
-    # --- If the Docker socket is mounted (trusted builds only) ---
-    # Add both:
+    # Workspaces live in the container filesystem and are lost when a replica is replaced.
+    # Optional and untested here: for Docker builds, mount the socket and run as root.
+    # This gives build jobs control of the host Docker daemon (see README, Security).
     # volumes:
     #   - "/var/run/docker.sock:/var/run/docker.sock"
     # user: root
-    # Non-root gives no protection once the socket is mounted — a process with
-    # socket access can start privileged containers and reach host paths
-    # regardless of its own UID.
-    # WARNING: with this mount, any build job can control the host Docker
-    # daemon, read host paths, and reach the controller's secrets. The agent
-    # Jenkins account does not restrict that access.
     secrets:
-      # Workers receive only the dedicated agent account — never the admin secret.
       - agent-user
       - agent-pass
     deploy:
       replicas: ${WORKER_REPLICAS:-1}
-      # Retry window (~100s) must exceed controller start_period (60s) + one healthcheck interval (30s).
-      # Increase max_attempts if the controller is slow to pass its healthcheck.
+      # 10 retries x 10s is about 100s; a slower controller start can exhaust it (see README).
       restart_policy:
         condition: on-failure
         delay: 10s

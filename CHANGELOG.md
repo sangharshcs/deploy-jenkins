@@ -1,53 +1,33 @@
 # Changelog
 
+## 1.4.1 - 2026-10-07
+
+- `deploy.sh` now exports `SWARM_EXECUTORS`, `SWARM_LABELS` and `SWARM_WEBSOCKET`, so values set in `.env` reach the stack. Before, they were ignored and the `stack.yml` defaults were used.
+- Shortened comments in `stack.yml`, `security.groovy`, `deploy.sh` and `AGENTS.md`; removed the unused `ROTATE_SECRETS` warning and a local path from `AGENTS.md`.
+- README: removed or softened claims that were not tested, and added the scale-down results.
+
 ## 1.4.0 - 2026-10-07
 
-### Breaking
-
-- The built-in node now has 0 executors and is set to EXCLUSIVE mode. Unlabelled jobs run on any available Swarm worker (workers are Mode.NORMAL). Only jobs that explicitly target the built-in node (label expression set to `built-in`) will wait in the queue with no executor. Existing jobs do not need a label change unless they already restrict themselves to the built-in node.
-
-### Security
-
-- `security.groovy` now calls `setNumExecutors(0)` and `setMode(EXCLUSIVE)` on the Jenkins instance before saving, preventing any build from running on the built-in node. Previously the default of 2 executors applied, giving build jobs access to the admin secret and all of `JENKINS_HOME`.
-- CI smoke test now asserts the Built-In Node reports `numExecutors == 0` via the `/computer/api/json` endpoint.
+- The built-in node now has 0 executors (`security.groovy`), so builds do not run inside the controller container. Unlabelled jobs run on any worker. Jobs that require the label `built-in` will wait in the queue.
+- CI checks that the built-in node reports 0 executors.
 
 ## 1.3.0 - 2026-10-07
 
-### Breaking
-
-- The worker now runs as UID/GID 10001 (`jenkins` user) instead of root. Build jobs that install packages, write to system paths, or require root access will fail. Options: (a) extend the worker image (`USER root` / install / `USER jenkins`) to bake in the packages you need; (b) add `user: root` to the worker service in `stack.yml` for container root without host Docker access; (c) add both the socket mount and `user: root` if Docker builds are needed (non-root gives no protection once the socket is mounted).
-- The Swarm client JAR path moved from `/opt/swarm-client.jar` to `/home/jenkins/swarm-client.jar`.
-
-### Security
-
-- CI smoke test now asserts the worker container is not running as root (`id -u` must not equal `0`).
+- The worker now runs as UID/GID 10001 (`jenkins`) instead of root. Jobs that install packages or write to system paths will fail; see the README for options.
+- The Swarm client JAR moved from `/opt/swarm-client.jar` to `/home/jenkins/swarm-client.jar`.
+- CI checks that the worker is not running as root.
 
 ## 1.2.0 - 2026-10-06
 
-### Breaking
-
-- `AGENT_USER` and `AGENT_PASS` are now required in `.env`; `deploy.sh` exits without them and rejects an `AGENT_USER` equal to `JENKINS_USER`. Existing deployments: add both values and redeploy.
-- The worker no longer mounts the Docker socket by default and `user: root` is removed from `stack.yml`. Docker builds need the opt-in socket mount documented in `stack.yml`. The worker image itself still runs as root (it has no `USER` directive).
-- `JENKINS_URL_SCHEME` is removed. For HTTPS, put a TLS-terminating reverse proxy in front of the controller and set `JENKINS_CONTROLLER_URL` explicitly. See README §HTTPS.
-- `SWARM_DISABLE_SSL_VERIFY` is removed. It only affected the Java client, not the `wget` that downloads the Swarm client JAR.
-
-### Security
-
-- Four Docker secrets instead of two: `jenkins-user`/`jenkins-pass` go to the controller only; `agent-user`/`agent-pass` go to the controller (to create the account) and to workers. Workers never receive the admin password.
-- Replaced `FullControlOnceLoggedInAuthorizationStrategy` with `GlobalMatrixAuthorizationStrategy` (adds the `matrix-auth` plugin). The agent account has only `Hudson.READ` and `Computer.CREATE/CONNECT/DISCONNECT/BUILD`.
-- `security.groovy` fails fast if `agent-user` equals `jenkins-user`.
-- CI smoke test asserts the admin account reaches `/manage` (HTTP 200) and the agent account is refused (HTTP 403).
-
-### Changed
-
-- Worker workspaces now live in each container's own filesystem instead of a shared host bind mount at `WORKER_ROOT`, so replicas cannot overwrite one another's files. Files are discarded when a replica is removed or replaced.
-- `stack.yml` adds a `node.role == manager` placement constraint to the controller. It does not pin the controller to one host; on a multi-node cluster use a node label or shared storage.
-- `deploy.sh` verifies that Jenkins (UID 1000) can write to `CONTROLLER_ROOT` before deploying.
-- `deploy.sh` exports `JENKINS_CONTROLLER_URL` so `docker stack deploy` substitutes it from a sourced `.env`.
-- `stop.sh` sources `.env`, so a `STACK_NAME` set there is honoured.
-- `stop.sh` header comment now lists all four secrets.
-- README documents credential rotation, HTTPS requirements and single-node limitations.
-- README scale-down claims now match what was observed: an idle 5 -> 1 scale-down took the removed workers offline in Jenkins. Behaviour for a build running on a stopped replica, and whether Jenkins later removes the offline entries, are documented as untested, with a reproducible test procedure.
+- `AGENT_USER` and `AGENT_PASS` are now required in `.env`. Add both and redeploy.
+- Four Docker secrets: the admin pair stays on the controller; the agent pair goes to the controller and the workers.
+- `FullControlOnceLoggedIn` replaced by matrix authorization (adds the `matrix-auth` plugin). The agent account has `Hudson.READ` and `Computer.CREATE/CONNECT/DISCONNECT/BUILD`.
+- The Docker socket is no longer mounted by default and `user: root` is gone from `stack.yml`.
+- `JENKINS_URL_SCHEME` and `SWARM_DISABLE_SSL_VERIFY` removed. For HTTPS, put a TLS-terminating proxy in front and set `JENKINS_CONTROLLER_URL`.
+- Worker workspaces now live in each container instead of a shared host directory.
+- `deploy.sh` checks that UID 1000 can write to `CONTROLLER_ROOT`; `stop.sh` reads `STACK_NAME` from `.env`.
+- Controller placement constraint `node.role == manager` added. It does not pin the controller to one node.
+- CI checks admin `/manage` returns 200 and agent `/manage` returns 403.
 
 ## 1.1.2 - 2026-06-11
 
