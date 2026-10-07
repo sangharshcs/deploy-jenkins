@@ -134,7 +134,7 @@ sequenceDiagram
 
     S->>C: docker stack deploy (stack.yml)
     Note over C: security.groovy creates admin + agent accounts
-    Note over W: worker starts, retries until controller ready
+    Note over W: worker starts; failed starts are retried (up to 10 times)
 
     W->>C: GET /jenkins/swarm/swarm-client.jar
     C-->>W: swarm-client.jar
@@ -357,12 +357,7 @@ docker service logs --tail 100 jenkins_worker
 ```
 Look for `RetryException`, `HTTP response code: 403` or `SEVERE:`. A 403 can mean the agent account lacks a permission or the credentials do not match.
 
-**Workers stopped after the controller was slow to start:** the worker restart policy is 10 attempts, 10 seconds apart (about 100 seconds). If the controller takes longer than that to start, workers stop being restarted. Cycle them:
-```bash
-docker service scale jenkins_worker=0
-docker service scale jenkins_worker="${WORKER_REPLICAS:-1}"
-```
-Raising `max_attempts` or `delay` in `stack.yml` is another option.
+The service allows up to 10 failed container restart attempts with a 10-second delay between them. This is not a fixed controller startup deadline; check `docker service ps` and worker logs if workers fail to connect.
 
 ---
 
