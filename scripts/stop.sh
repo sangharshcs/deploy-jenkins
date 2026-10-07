@@ -2,7 +2,7 @@
 # Usage: ./scripts/stop.sh
 #
 # Removes the Jenkins Swarm stack, waits until teardown completes, then
-# removes Docker secrets (jenkins-user, jenkins-pass).
+# removes Docker secrets (jenkins-user, jenkins-pass, agent-user, agent-pass).
 # Safe to run repeatedly (idempotent).
 
 set -euo pipefail
