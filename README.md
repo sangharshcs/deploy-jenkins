@@ -3,7 +3,7 @@
 
 # deploy-jenkins
 
-**Single-node Jenkins on Docker Swarm — workers register themselves automatically.**
+**Single-node Jenkins on Docker Swarm, with workers that register themselves.**
 
 [![CI](https://github.com/sangharshcs/deploy-jenkins/actions/workflows/docker-images.yml/badge.svg)](https://github.com/sangharshcs/deploy-jenkins/actions/workflows/docker-images.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -11,8 +11,7 @@
 [![Docker Swarm](https://img.shields.io/badge/Orchestration-Docker%20Swarm-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/engine/swarm/)
 [![Ubuntu 24.04](https://img.shields.io/badge/Worker%20Base-Ubuntu%2024.04-E95420?logo=ubuntu&logoColor=white)](https://hub.docker.com/_/ubuntu)
 
-A runnable single-node demo. Workers register themselves on startup — no manual node configuration.  
-Adapt it to your own environment; production considerations are called out explicitly.
+A small single-node demo for learning. Adapt it to your own setup, and check the parts marked untested before relying on them.
 
 [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Scaling](#scaling-workers) · [HTTPS](#https) · [Configuration](#configuration-reference) · [Security](#security) · [CI/CD](#cicd)
 
@@ -22,15 +21,15 @@ Adapt it to your own environment; production considerations are called out expli
 
 ## Why this exists
 
-Adding a Jenkins build node by hand means navigating **Manage Jenkins → Nodes**, filling forms, copying secrets, SSH-ing into the machine and running a command. Do that five times and you've lost an afternoon.
+Adding a Jenkins build node by hand means going through **Manage Jenkins → Nodes**, filling in forms, copying secrets, connecting to the machine and running a command.
 
-The [Jenkins Swarm Plugin](https://plugins.jenkins.io/swarm/) (≥ 3.22 for WebSocket) inverts the relationship. Workers connect *to* the controller — the controller never reaches out. Combine that with Docker Swarm replica scaling and capacity becomes a single command:
+The [Jenkins Swarm Plugin](https://plugins.jenkins.io/swarm/) lets workers connect *to* the controller (WebSocket needs plugin 3.22 or later). With Docker Swarm replicas, adding capacity is one command:
 
 ```bash
 docker service scale jenkins_worker=10
 ```
 
-This repo provides the complete setup: two Docker images, four Docker secrets, one stack file, and a deploy script.
+This repo has two Docker images, four Docker secrets, one stack file and a deploy script.
 
 ---
 
@@ -52,7 +51,7 @@ flowchart TB
             JC["Jenkins Controller\nlts-slim-jdk21 · :8080/jenkins\nswarm + matrix-auth plugins"]
         end
 
-        subgraph WORKERS ["Worker Replicas — scale freely"]
+        subgraph WORKERS ["Worker replicas"]
             direction LR
             W1["Worker 1\nubuntu:24.04 · openjdk-21\nUID 10001 (jenkins)"]
             W2["Worker 2"]
@@ -72,19 +71,7 @@ flowchart TB
     AGENT_SECRETS -->|"controller + workers"| SWARM
 ```
 
-> The controller mounts all four secrets so `security.groovy` can create both accounts on first boot. Workers receive only the agent pair — the admin password never touches a worker container.
-
----
-
-## Features
-
-- **Zero-touch node registration** — workers self-register; no XML, no UI clicks, no Groovy after the initial bootstrap
-- **Elastic capacity** — `docker service scale jenkins_worker=N` adds or removes build capacity; new replicas come online automatically
-- **Separate admin and agent credentials** — workers log in as a dedicated account with only the permissions the Swarm plugin needs; the admin password is a controller-only secret
-- **Matrix Authorization** — `GlobalMatrixAuthorizationStrategy` per identity; no blanket full-control-once-logged-in
-- **Secrets-first** — all credentials in Docker secrets at `/run/secrets/`; never environment variables
-- **Unique deploy tags** — every deploy generates a timestamped image tag, eliminating stale `latest` cache bugs
-- **Single stack file** — `stack.yml` with `${VAR:-default}` env var interpolation only
+The controller mounts all four secrets so `security.groovy` can create both accounts. Workers get only the agent pair.
 
 ---
 
@@ -93,7 +80,7 @@ flowchart TB
 ### Prerequisites
 
 - Docker Engine with Swarm mode active (`docker swarm init` if needed)
-- Docker Hub account (only needed to push/pull images)
+- A Docker Hub account, only if you want to push or pull images
 
 ### 1 — Clone and configure
 
@@ -103,7 +90,7 @@ cd deploy-jenkins
 cp .env.example .env
 ```
 
-Open `.env` and fill in the five required values:
+Fill in the five required values in `.env`:
 
 ```bash
 JENKINS_SERVER_IP=<your-server-ip>   # 127.0.0.1 works for a local demo
@@ -113,14 +100,9 @@ AGENT_USER=agent
 AGENT_PASS=<different-strong-password>
 ```
 
-Generate strong passwords:
+For example, `openssl rand -base64 24` (run twice) generates two passwords.
 
-```bash
-openssl rand -base64 24   # run twice — once for JENKINS_PASS, once for AGENT_PASS
-```
-
-> **Why two passwords?**  
-> Workers log in as `AGENT_USER`. That account can connect agents and run builds, but cannot read other jobs' configuration, manage credentials, or administer Jenkins. If a build job reads `/run/secrets/agent-pass`, it gets only that limited account — not the admin password.
+Workers log in as `AGENT_USER`, which has only the permissions listed in `controller/security.groovy`. CI checks that this account gets 403 on `/manage`. A build job running on a worker can still read `/run/secrets/agent-pass`.
 
 ### 2 — Deploy
 
@@ -128,7 +110,7 @@ openssl rand -base64 24   # run twice — once for JENKINS_PASS, once for AGENT_
 ./scripts/deploy.sh
 ```
 
-Builds both images, creates Docker secrets, and deploys the stack.
+This builds both images, creates the Docker secrets and deploys the stack.
 
 ### 3 — Open Jenkins
 
@@ -136,15 +118,13 @@ Builds both images, creates Docker secrets, and deploys the stack.
 http://<JENKINS_SERVER_IP>:8080/jenkins
 ```
 
-> **The controller runs no builds.** The built-in node has 0 executors and is set to EXCLUSIVE mode. Unlabelled jobs run on any available Swarm worker (workers are Mode.NORMAL). Only jobs that explicitly target the built-in node — by setting their label expression to `built-in` — will wait in the queue with no executor. Existing jobs do not need a label change unless they already restrict themselves to the built-in node.
+The built-in node has 0 executors, so builds do not run inside the controller container. Jobs with no label run on any worker. A job whose label expression is `built-in` waits in the queue with no executor.
 
-> **HTTP is for isolated local demos only.** Credentials and the downloaded swarm-client JAR cross this connection unencrypted. `JENKINS_SERVER_IP=127.0.0.1` only sets the displayed URL and the workers' target; it does **not** bind Swarm's published port to loopback. The stack publishes port 8080 on the host. Restrict inbound access to that port at the host or network boundary and verify it is inaccessible from other machines. See [HTTPS](#https) for networked deployments.
+The default is plain HTTP, so credentials and the downloaded swarm-client JAR are not encrypted in transit. Use it only on a network you trust. `JENKINS_SERVER_IP=127.0.0.1` does not bind the published port to loopback; the stack publishes port 8080 on the host. See [HTTPS](#https).
 
 ---
 
 ## How it works
-
-### Auto-discovery flow
 
 ```mermaid
 sequenceDiagram
@@ -157,28 +137,19 @@ sequenceDiagram
     Note over W: worker starts, retries until controller ready
 
     W->>C: GET /jenkins/swarm/swarm-client.jar
-    C-->>W: swarm-client.jar (version-matched)
+    C-->>W: swarm-client.jar
 
-    W->>W: read /run/secrets/agent-user
-    W->>W: read /run/secrets/agent-pass
+    W->>W: read /run/secrets/agent-user and agent-pass
 
     W->>C: connect -url -username -passwordFile -webSocket
     C-->>W: registered as build node
-
-    Note over C,W: Node appears in Manage Jenkins → Nodes
 ```
 
-### Worker startup
+`worker/start.sh` reads the agent credentials from `/run/secrets/`, downloads `swarm-client.jar` from the controller if it is not already there, and connects over WebSocket.
 
-`worker/start.sh` reads credentials from `/run/secrets/agent-*`, downloads `swarm-client.jar` from the controller if it isn't already present, and connects via WebSocket.
+Each worker keeps its workspace in its own container filesystem. The files are lost when a replica is removed or replaced.
 
-Each worker replica keeps its workspace in its own container filesystem. Replicas cannot overwrite one another's workspace files, but those files are lost when a replica is removed or replaced. Publish build outputs as Jenkins artifacts or to external storage if they need to persist.
-
-**The worker container runs as UID 10001 (`jenkins`).** The Docker socket is **not** mounted by default. See [Security](#security) for opt-in options.
-
-Non-root does not prevent a build job from reading `/run/secrets/agent-pass` — the secret files are mode 0444 and readable by any user.
-
-**If build jobs need extra packages**, extend the worker image — do not run as root at runtime:
+The worker runs as UID 10001 (`jenkins`). The Docker socket is not mounted by default. Jobs that install packages or write to system paths will fail as non-root. One option is to extend the worker image:
 
 ```dockerfile
 FROM <your-worker-image>
@@ -187,104 +158,72 @@ RUN apt-get update && apt-get install -y --no-install-recommends <pkg> && rm -rf
 USER jenkins
 ```
 
-**If build jobs need to run as root inside the container** (without host Docker access), add `user: root` to the worker service in `stack.yml`. This affects the container process only; the host is unaffected as long as no privileged mounts are added.
-
-**If build jobs need to run Docker commands**, add both the socket mount and `user: root` to the worker service in `stack.yml`. Non-root gives no protection once the socket is mounted — a process with socket access can start privileged containers and reach host paths regardless of its own UID. See [Security](#security) for the full warning.
+Other options, both untested here: `user: root` on the worker service in `stack.yml`, or the commented socket mount and `user: root` in `stack.yml` for Docker builds. The socket gives build jobs control of the host Docker daemon.
 
 ---
 
 ## Scaling workers
 
 ```bash
-# Scale up
-docker service scale jenkins_worker=5
-
-# Scale back down
-docker service scale jenkins_worker=1
-
-# Remove all workers (controller keeps running)
-docker service scale jenkins_worker=0
+docker service scale jenkins_worker=5   # up
+docker service scale jenkins_worker=1   # down
+docker service scale jenkins_worker=0   # no workers; the controller keeps running
 ```
 
-**Scale-down behaviour:** when Docker Swarm stops a replica, the `swarm-client` process receives SIGTERM and should call the Jenkins disconnect API before exiting (not yet confirmed in the logs). In an idle-worker test (5 replicas scaled to 1, no active builds), the removed workers appeared as offline nodes in the Jenkins node list immediately after the scale command. Whether those offline entries are eventually cleaned up by Jenkins — and how quickly — was not recorded; the available screenshot is a single point in time. Do not treat an offline entry as permanent.
+**What we observed when scaling down with builds running** (one run, Docker Desktop single node, Freestyle jobs):
 
-If a build is running on the stopped replica when SIGTERM arrives, the build may be marked as failed or aborted. **This scenario has not been tested.** Scale down one replica at a time and verify the node is idle before reducing capacity if build continuity matters. See [Testing scale-down with an active build](#testing-scale-down-with-an-active-build) for a reproducible test procedure.
+- Five workers with one executor each (`SWARM_EXECUTORS=1`), five builds running, then `docker service scale jenkins_worker=1`.
+- The four stopped replicas received SIGTERM and exited with code 143 within about a second of each other.
+- The four builds running on them failed (`Backing channel '...' is disconnected`), about a second after their last output. Nothing drained or moved them.
+- The build on the surviving replica finished normally.
+- About a minute later, the four stopped nodes were no longer in the Jenkins node list. We checked once, so the timing is approximate. In an earlier test with idle workers, the removed workers showed as offline right after the command.
+- A rolling update of the worker service (changing its environment) stopped a running build the same way, in one run.
 
-**Scale-down is not tested in CI.** The smoke test runs plain `docker run` containers, not a Swarm stack.
+**Not observed:** whether `swarm-client` disconnected cleanly (it logs nothing on SIGTERM), Pipeline jobs, or multi-node behavior. The scale-down runs were manual and are not part of CI.
 
-**Workspace lifecycle:** scaling down discards the removed replicas' workspaces. Scaling up creates fresh, separate workspaces. Do not rely on the worker filesystem as a persistent build cache.
+Swarm chooses which replicas to stop, so you cannot pick an idle one with `docker service scale`. If running builds matter, scale down only when none are running.
 
-### Testing scale-down with an active build
-
-> **UNTESTED** — this procedure has not been run. Results are unknown. If you run it, record your findings and submit them as an issue or PR.
-
-**Prerequisites:** a running deployment with at least two worker replicas.
-
-1. In Jenkins, create a **Freestyle** job (no Pipeline plugin required):
-   - Add an **Execute shell** build step: `echo "NODE_NAME=$NODE_NAME"; sleep 180`
-2. Scale workers to 5: `docker service scale jenkins_worker=5`
-3. Wait for all 5 workers to appear online in **Manage Jenkins → Nodes**.
-4. Trigger the job. Note which worker it runs on (the `NODE_NAME` value in the console output, visible before `sleep` starts).
-5. While the build is running on that worker, scale to 1:
-   ```bash
-   docker service scale jenkins_worker=1
-   ```
-   If Docker Swarm stops the replica that the build is running on, proceed to step 6. If the build lands on the replica that survives, the test is inconclusive — scale back to 5 and repeat from step 3.
-6. Record:
-   - Whether the Swarm replica for that worker exits cleanly (`docker service ps jenkins_worker`).
-   - The build's final status in Jenkins (Aborted? Failed? Still running?).
-   - The node's state in **Manage Jenkins → Nodes** immediately after and ~60 seconds later.
-   - Relevant logs: `docker service logs --tail 100 jenkins_worker`
+Scaling down discards the removed replicas' workspaces.
 
 ---
 
 ## HTTPS
 
-This demo defaults to HTTP. HTTP is acceptable for an isolated single-node demo where the host is not reachable from untrusted networks.
+The default is HTTP. This section describes a setup we have not tested.
 
-For any networked deployment, place a TLS-terminating reverse proxy (nginx, Caddy, Traefik, a load balancer) in front of the host:
-
-1. The proxy terminates TLS and forwards to `http://localhost:8080/jenkins`.
-2. Block direct access to port 8080 from outside the host so the unencrypted endpoint cannot be reached.
-3. If using WebSocket mode, ensure the proxy forwards `Upgrade` and `Connection` headers.
-4. Tell workers the actual HTTPS URL by setting `JENKINS_CONTROLLER_URL` explicitly in `.env`:
+1. Put a TLS-terminating reverse proxy (nginx, Caddy, Traefik, a load balancer) in front of the host, forwarding to `http://localhost:8080/jenkins`.
+2. Block outside access to port 8080.
+3. The proxy has to pass the WebSocket `Upgrade` and `Connection` headers.
+4. Set the URL workers use in `.env`:
 
 ```bash
 JENKINS_CONTROLLER_URL=https://jenkins.example.com/jenkins
 ```
 
-`deploy.sh` passes this value unchanged to workers. It will not silently construct `https://host:8080` — if `JENKINS_CONTROLLER_URL` is not set explicitly, `deploy.sh` always derives an HTTP URL from `JENKINS_SERVER_IP` and `UI_PORT`.
+If `JENKINS_CONTROLLER_URL` is not set, `deploy.sh` builds an `http://` URL from `JENKINS_SERVER_IP` and `UI_PORT`.
 
-**Certificate requirements:** the worker downloads `swarm-client.jar` using `wget` and then connects with a Java TLS client. Both must trust your certificate. Use a certificate issued by a CA your OS trusts (Let's Encrypt works), or add the CA to the Java trust store in the worker image. A self-signed certificate that is not added to the trust store will fail the `wget` download before the Swarm client even starts.
+The worker downloads `swarm-client.jar` with `wget` and then connects with Java, so both need to trust your certificate. If you use a private CA, you would add it to the worker image.
 
 ---
 
-## Credential rotation
+## Changing credentials
 
-Docker secrets are immutable once created. The rotation procedure:
+`deploy.sh` creates a Docker secret only if it does not exist yet, and Docker secrets cannot be edited. To change credentials:
 
 ```bash
-# 1. Stop the stack and remove all secrets
-./scripts/stop.sh
-
-# 2. Update credentials in .env
-
-# 3. Redeploy — secrets are recreated from the new .env values.
-#    security.groovy.override runs on every container start and updates
-#    the Jenkins internal DB from the mounted secrets.
+./scripts/stop.sh        # removes the stack and all four secrets
+# edit .env
 ./scripts/deploy.sh
 ```
 
-**Changing a password in the Jenkins UI** will be overwritten on the next container restart — Docker secrets are authoritative.
+`security.groovy` runs on every controller start and sets both passwords from the mounted secrets. This path has not been tested end to end.
 
 ---
 
 ## Single-node limitations
 
-This demo is designed for a single-node Swarm:
-
-- **Image distribution:** locally built images are available on the current node. A multi-node cluster requires a shared registry; `deploy.sh` does not distribute images to other nodes.
-- **Controller storage:** `CONTROLLER_ROOT` is a host bind mount. The `node.role == manager` placement constraint keeps the controller on the manager node, which on a single-node Swarm is the only node. On a multi-node cluster with multiple managers, this constraint does *not* pin the controller to one specific host — it may reschedule to a different manager and lose the bind-mounted volume. Use a node label (`node.labels.jenkins==controller`) or shared storage (NFS/EFS) for multi-node deployments.
+- **Images:** `deploy.sh` builds images on the local node and does not distribute them. A multi-node cluster needs a registry that every node can pull from.
+- **Controller storage:** `CONTROLLER_ROOT` is a host bind mount. The `node.role == manager` constraint does not pin the controller to one node. On a multi-node cluster it could start on another manager with an empty Jenkins home. A node label or shared storage would be needed.
 
 ---
 
@@ -292,41 +231,29 @@ This demo is designed for a single-node Swarm:
 
 ```
 deploy-jenkins/
-│
-├── stack.yml                    # Docker Swarm stack — controller + worker
-│
+├── stack.yml                    # Docker Swarm stack: controller + worker
 ├── controller/
 │   ├── Dockerfile               # jenkins/jenkins:lts-slim-jdk21
-│   ├── security.groovy          # Bootstrap: admin + agent accounts, Matrix Auth
+│   ├── security.groovy          # Accounts, matrix authorization, 0 built-in executors
 │   └── plugins.txt              # swarm:3.51, matrix-auth
-│
 ├── worker/
-│   ├── Dockerfile               # ubuntu:24.04 + openjdk-21, runs as UID 10001 (jenkins)
-│   └── start.sh                 # Agent entrypoint (uses agent-user/agent-pass)
-│
+│   ├── Dockerfile               # ubuntu:24.04 + openjdk-21, UID 10001 (jenkins)
+│   └── start.sh                 # Worker entrypoint
 ├── scripts/
-│   ├── deploy.sh                # Build → secrets → stack deploy
-│   └── stop.sh                  # Tear down stack + remove all Docker secrets
-│
+│   ├── deploy.sh                # Build, create secrets, stack deploy
+│   └── stop.sh                  # Remove the stack and all secrets
 ├── .github/workflows/
-│   └── docker-images.yml        # CI: build → smoke test → privilege checks → push
-│
-├── .env.example                 # All config vars, documented
-└── AGENTS.md                    # Instructions for AI coding agents
+│   └── docker-images.yml        # CI: build, smoke test, push
+├── .env.example                 # Configuration variables
+└── AGENTS.md                    # Notes for AI coding agents
 ```
-
----
-
-## Script reference
 
 | Command | What it does |
 |---|---|
-| `./scripts/deploy.sh` | Full deploy: build → secrets → stack deploy |
+| `./scripts/deploy.sh` | Build, create secrets, deploy |
 | `./scripts/deploy.sh --skip-build` | Deploy without rebuilding images |
-| `./scripts/stop.sh` | Stop stack and remove all Docker secrets |
-| `docker service scale jenkins_worker=N` | Scale workers up or down |
-| `docker service logs -f jenkins_controller` | Tail controller logs |
-| `docker service logs -f jenkins_worker` | Tail worker logs |
+| `./scripts/stop.sh` | Remove the stack and all four secrets |
+| `docker service logs -f jenkins_controller` | Controller logs (use `jenkins_worker` for workers) |
 
 ---
 
@@ -334,36 +261,32 @@ deploy-jenkins/
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `JENKINS_SERVER_IP` | ✅ | — | Address used in the displayed UI URL and derived worker URL; does not restrict the published port |
+| `JENKINS_SERVER_IP` | ✅ | — | Address used in the UI URL and the derived worker URL; does not restrict the published port |
 | `JENKINS_USER` | ✅ | — | Admin username |
 | `JENKINS_PASS` | ✅ | — | Admin password |
-| `AGENT_USER` | ✅ | — | Dedicated agent account username |
-| `AGENT_PASS` | ✅ | — | Dedicated agent account password |
-| `JENKINS_CONTROLLER_URL` | | derived | Explicit URL workers use to reach the controller; set when TLS terminates on an external proxy |
-| `UI_PORT` | | `8080` | Published host port for the controller (container port is 8080) |
+| `AGENT_USER` | ✅ | — | Agent account username (must differ from `JENKINS_USER`) |
+| `AGENT_PASS` | ✅ | — | Agent account password |
+| `JENKINS_CONTROLLER_URL` | | derived | URL workers use to reach the controller; set it when TLS terminates on a proxy |
+| `UI_PORT` | | `8080` | Published host port for the controller |
 | `CONTROLLER_ROOT` | | `/opt/jenkins_home` | Host path for Jenkins data |
-| `WORKER_ROOT` | | `/opt/worker_home` | Workspace path inside each worker container; ephemeral and isolated per replica |
-| `DOCKERHUB_NAMESPACE` | | `sangharshcs` | Docker Hub org/user for image names |
+| `WORKER_ROOT` | | `/opt/worker_home` | Workspace path inside each worker container |
+| `DOCKERHUB_NAMESPACE` | | `sangharshcs` | Docker Hub user or org for image names |
 | `WORKER_REPLICAS` | | `1` | Initial number of worker replicas |
-| `DEPLOY_TAG` | | `<version>-<timestamp>` | Override image tag |
-| `SWARM_EXECUTORS` | | `5` | Number of executors per worker |
-| `SWARM_LABELS` | | `swarm docker` | Labels assigned to worker nodes |
-| `SWARM_WEBSOCKET` | | `true` | Use WebSocket for agent connection |
+| `DEPLOY_TAG` | | `<version>-<timestamp>` | Image tag |
+| `SWARM_EXECUTORS` | | `5` | Executors per worker |
+| `SWARM_LABELS` | | `swarm docker` | Labels on worker nodes |
+| `SWARM_WEBSOCKET` | | `true` | Connect with WebSocket |
 | `STACK_NAME` | | `jenkins` | Docker stack name |
 
-> **Local Docker Desktop:** if `JENKINS_SERVER_IP` is `127.0.0.1` or `localhost`, workers automatically target `host.docker.internal` so they can reach the controller from inside the Swarm overlay network.
+If `JENKINS_SERVER_IP` is `127.0.0.1` or `localhost`, workers use `host.docker.internal` to reach the controller.
 
-> **`CONTROLLER_ROOT` permissions:** `deploy.sh` creates this directory and verifies that Jenkins (UID 1000) can write to it. If the check fails, the error message prints the actual path. Make that directory writable by UID 1000 before redeploying. Using the `.env.example` default path as the example:
-> ```bash
-> sudo chown 1000 /tmp/jenkins_home
-> ```
-> Replace `/tmp/jenkins_home` with the path shown in the error message. Avoid `chown -R` on an existing Jenkins home — it may corrupt files owned by other UIDs inside the volume.
+`deploy.sh` checks that Jenkins (UID 1000) can write to `CONTROLLER_ROOT`. If it cannot, the error prints the path; make that directory writable by UID 1000, for example `sudo chown 1000 <path>`.
 
 ---
 
 ## CI/CD
 
-The workflow runs on every PR and push to `main`:
+The workflow runs on every pull request and on pushes to `main`:
 
 ```mermaid
 flowchart LR
@@ -391,83 +314,61 @@ flowchart LR
     end
 ```
 
-The push job loads the exact images that passed the smoke test — it does not rebuild.
+Images are published when a push to `main` or a `v*` tag happens, or when the workflow is run manually (`workflow_dispatch`, from any branch). Pull requests run only the smoke test. The push job loads the images that passed the smoke test; it does not rebuild them.
 
-**What CI does not test:** Docker Swarm stack deployment, scale-down behaviour, and HTTPS connections. The smoke test runs plain `docker run` containers on a bridge network.
+CI does not test a Swarm deployment, scale-down or HTTPS. The smoke test uses plain `docker run` containers on a bridge network.
 
-**Publishing triggers:** images are published when `push` fires on `main`, when a `v*` tag is pushed, or when `workflow_dispatch` is used. Pull requests run the smoke test only.
-
-### Set up CI
-
-| Secret | Value |
-|---|---|
-| `DOCKERHUB_USERNAME` | Your Docker Hub username |
-| `DOCKERHUB_TOKEN` | Docker Hub access token |
+To publish from your own fork, add the secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
 
 ---
 
 ## Security
 
-| Practice | How it's implemented |
+What is set up, and what has actually been checked:
+
+| Item | Notes |
 |---|---|
-| Separate admin and agent credentials | Four Docker secrets: `jenkins-user`/`jenkins-pass` on the controller only; `agent-user`/`agent-pass` on controller (to create the account) and workers |
-| Matrix Authorization | `GlobalMatrixAuthorizationStrategy` (matrix-auth plugin) — the agent account has `Hudson.READ`, `Computer.CREATE/CONNECT/DISCONNECT/BUILD`; no access to jobs, credentials, or administration |
-| Credentials never in env vars | Mounted as Docker secrets at `/run/secrets/`; never in the `environment:` section |
-| Secrets as source of truth | `security.groovy.override` runs on every container start and updates both accounts from mounted secrets |
-| Anonymous read disabled | Enforced in `security.groovy` |
-| CSRF protection | `DefaultCrumbIssuer(true)` set in `security.groovy` |
-| Controller runs no builds | The built-in node has 0 executors and is set to EXCLUSIVE mode. Jobs on the built-in node would run inside the controller container alongside `/run/secrets/jenkins-pass` and the full contents of `JENKINS_HOME`. Unlabelled jobs run on any available Swarm worker (workers are Mode.NORMAL). Only jobs that explicitly target the built-in node (label expression `built-in`) will wait in the queue with no executor; those jobs need a worker label instead. This does not stop a job on a worker from reading `/run/secrets/agent-pass` |
-| Worker runs as UID 10001 | The worker runs as a non-root `jenkins` user (UID/GID 10001). The Docker socket is **not** mounted by default. Non-root does not prevent a job from reading `/run/secrets/agent-pass` — the secret files are mode 0444 and readable by any user. To add packages, extend the image (see Worker startup). To run as root inside the container without host Docker access, add `user: root` to the worker service in `stack.yml` |
-| Docker socket opt-in | To enable Docker builds, add the socket mount to the worker service in `stack.yml`. Also add `user: root` — non-root gives no protection once the socket is mounted, since a process with socket access can start privileged containers and reach host paths regardless of its own UID. **This gives every build job full control of the host Docker daemon** — it can start privileged containers, read host paths, and reach any secret accessible to the Docker daemon, including the Jenkins home. The separate agent Jenkins account does not limit that access |
-| Controller placement | `node.role == manager` keeps the controller on a manager node. On a single-node Swarm this is always the only node. See [Single-node limitations](#single-node-limitations) for multi-node caveats |
-| Minimal plugin surface | Controller ships with `swarm` and `matrix-auth` only |
-| HTTP limitation | Default deployment is HTTP. Credentials and swarm-client JAR are unencrypted in transit. See [HTTPS](#https) for external proxy guidance |
+| Admin and agent credentials | Four Docker secrets. `jenkins-user`/`jenkins-pass` go to the controller only; `agent-user`/`agent-pass` go to the controller and the workers. On a deployed worker, a job could not find the admin secret. |
+| Matrix authorization | Admin has full control. The agent account has `Hudson.READ` and `Computer.CREATE/CONNECT/DISCONNECT/BUILD`. CI checks only that the agent gets 403 on `/manage`. |
+| Credentials | Passed as Docker secrets under `/run/secrets/`, not in the `environment:` section. |
+| Anonymous access | No permissions are granted to anonymous. One manual request to `/jenkins/api/json` returned 403. |
+| CSRF | `DefaultCrumbIssuer(true)` is set in `security.groovy`. |
+| Builds on the controller | The built-in node has 0 executors, because a job there runs next to `/run/secrets/jenkins-pass` and `JENKINS_HOME`. A job on the built-in node could read the admin secret before this was set. |
+| Worker user | UID 10001. A job on a worker still reads `/run/secrets/agent-pass` (mode 444), and `apt-get` and writes to `/etc` fail. |
+| Docker socket | Not mounted by default. The commented opt-in in `stack.yml` gives build jobs control of the host Docker daemon. Untested here. |
+| Plugins | `plugins.txt` lists `swarm` and `matrix-auth`. One deployment also showed two dependencies, `commons-lang3-api` and `ionicons-api`. |
+| Transport | HTTP by default; see [HTTPS](#https). |
 
 ---
 
 ## Troubleshooting
 
-**`deploy.sh` fails with "Jenkins (UID 1000) cannot write to CONTROLLER_ROOT":**  
-`deploy.sh` creates the directory and runs a write-access check using the controller image. If the current user owns the directory and it was created with mode 750, UID 1000 has no write access. The error message prints the actual path — use that path in the fix:
-```bash
-sudo chown 1000 /tmp/jenkins_home   # replace with the path in the error message
-```
-Avoid `chown -R` on an existing Jenkins home — it may corrupt files owned by other UIDs inside the volume.
+**`deploy.sh` says Jenkins (UID 1000) cannot write to `CONTROLLER_ROOT`:** make the printed directory writable by UID 1000 (`sudo chown 1000 <path>`).
 
-**Controller not starting?**
+**Controller not starting:**
 ```bash
 docker service logs --tail 100 jenkins_controller
 docker service ps jenkins_controller --no-trunc
 ```
 
-**Worker not connecting?**
+**Worker not connecting:**
 ```bash
 docker service logs --tail 100 jenkins_worker
 ```
-Look for `RetryException`, `HTTP response code: 403`, or `SEVERE:`. A 403 usually means the agent account is missing a permission or the credentials don't match.
+Look for `RetryException`, `HTTP response code: 403` or `SEVERE:`. A 403 can mean the agent account lacks a permission or the credentials do not match.
 
-**Worker restart policy exhausted:**  
-Workers retry on failure up to `max_attempts: 10` times with `delay: 10s` between each attempt (100 s total). If the controller is not reachable within that window — for example because it takes longer than 100 s to pass its own healthcheck — workers stop retrying and go into a `shutdown` state. Reset the retry counter by cycling replicas:
+**Workers stopped after the controller was slow to start:** the worker restart policy is 10 attempts, 10 seconds apart (about 100 seconds). If the controller takes longer than that to start, workers stop being restarted. Cycle them:
 ```bash
 docker service scale jenkins_worker=0
 docker service scale jenkins_worker="${WORKER_REPLICAS:-1}"
 ```
-The controller healthcheck is configured with `start_period: 60s`, `interval: 30s`, `retries: 5` (`stack.yml`). In a worst case the controller takes up to 210 s (60 + 5 × 30) to pass; increase `max_attempts` or `delay` in `stack.yml` if your host is slow to start.
-
-**Stale secrets:**
-```bash
-./scripts/stop.sh   # removes stack and all four secrets
-# edit .env
-./scripts/deploy.sh
-```
+Raising `max_attempts` or `delay` in `stack.yml` is another option.
 
 ---
 
 ## Contributing
 
-- Read `AGENTS.md` for security invariants that must not be violated
-- Keep credentials out of source files and images
-- Run `./scripts/deploy.sh` locally before opening a PR
+`AGENTS.md` lists the security rules for this repo. Keep credentials out of source files and images, and run `./scripts/deploy.sh` locally before opening a PR.
 
 ---
 
@@ -489,7 +390,5 @@ MIT — see [LICENSE](LICENSE).
 <div align="center">
 
 Built by [Sangharsh Agarwal](https://linkedin.com/in/agarwalsangharsh) · [GitHub](https://github.com/sangharshcs)
-
-*Workers find the controller. The controller finds the work.*
 
 </div>
