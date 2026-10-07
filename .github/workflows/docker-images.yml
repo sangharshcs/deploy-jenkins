@@ -144,11 +144,20 @@ jobs:
           import json
           import sys
           payload = json.load(open(sys.argv[1], "r", encoding="utf-8"))
-          names = [c.get("displayName", "") for c in payload.get("computer", [])]
+          computers = payload.get("computer", [])
+          names = [c.get("displayName", "") for c in computers]
           if len(names) < 2:
               print(f"Expected at least 2 nodes, got {len(names)}: {names}")
               sys.exit(1)
           print(f"Smoke test passed with nodes: {names}")
+          builtin = next((c for c in computers if c.get("displayName") == "Built-In Node"), None)
+          if builtin is None:
+              print("FAIL: Built-In Node not found in node list")
+              sys.exit(1)
+          if builtin.get("numExecutors", -1) != 0:
+              print(f"FAIL: Built-In Node has {builtin.get('numExecutors')} executors, expected 0")
+              sys.exit(1)
+          print(f"Built-in node executor check OK: numExecutors = {builtin.get('numExecutors')}")
           PY
 
           # Admin access check: admin account must be able to reach /manage
