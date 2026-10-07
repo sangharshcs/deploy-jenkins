@@ -104,7 +104,7 @@ jobs:
           curl -fsS -o /dev/null http://127.0.0.1:18080/jenkins/login
 
           # Worker receives only the agent secrets — never the admin password.
-          # Worker runs as root; no docker.sock is mounted in CI.
+          # Worker runs as UID 10001 (jenkins); no docker.sock is mounted in CI.
           docker run -d \
             --name jenkins-worker-ci \
             --network "${TEST_NETWORK}" \
@@ -173,6 +173,14 @@ jobs:
             exit 1
           fi
           echo "Privilege isolation OK: agent /manage returned HTTP ${HTTP_AGENT}"
+
+          # Non-root assertion: the worker must not be running as root
+          WORKER_UID="$(docker exec jenkins-worker-ci id -u)"
+          if [[ "${WORKER_UID}" == "0" ]]; then
+            echo "FAIL: worker container is running as root (UID 0)" >&2
+            exit 1
+          fi
+          echo "Worker non-root OK: worker running as UID ${WORKER_UID}"
 
       - name: Save tested images
         run: |
