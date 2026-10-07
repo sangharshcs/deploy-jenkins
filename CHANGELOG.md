@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.2.0 - 2026-10-06
+
+### Breaking
+
+- `AGENT_USER` and `AGENT_PASS` are now required in `.env`; `deploy.sh` exits without them and rejects an `AGENT_USER` equal to `JENKINS_USER`. Existing deployments: add both values and redeploy.
+- The worker no longer mounts the Docker socket by default and `user: root` is removed from `stack.yml`. Docker builds need the opt-in socket mount documented in `stack.yml`. The worker image itself still runs as root (it has no `USER` directive).
+- `JENKINS_URL_SCHEME` is removed. For HTTPS, put a TLS-terminating reverse proxy in front of the controller and set `JENKINS_CONTROLLER_URL` explicitly. See README §HTTPS.
+- `SWARM_DISABLE_SSL_VERIFY` is removed. It only affected the Java client, not the `wget` that downloads the Swarm client JAR.
+
+### Security
+
+- Four Docker secrets instead of two: `jenkins-user`/`jenkins-pass` go to the controller only; `agent-user`/`agent-pass` go to the controller (to create the account) and to workers. Workers never receive the admin password.
+- Replaced `FullControlOnceLoggedInAuthorizationStrategy` with `GlobalMatrixAuthorizationStrategy` (adds the `matrix-auth` plugin). The agent account has only `Hudson.READ` and `Computer.CREATE/CONNECT/DISCONNECT/BUILD`.
+- `security.groovy` fails fast if `agent-user` equals `jenkins-user`.
+- CI smoke test asserts the admin account reaches `/manage` (HTTP 200) and the agent account is refused (HTTP 403).
+
+### Changed
+
+- Worker workspaces now live in each container's own filesystem instead of a shared host bind mount at `WORKER_ROOT`, so replicas cannot overwrite one another's files. Files are discarded when a replica is removed or replaced.
+- `stack.yml` adds a `node.role == manager` placement constraint to the controller. It does not pin the controller to one host; on a multi-node cluster use a node label or shared storage.
+- `deploy.sh` verifies that Jenkins (UID 1000) can write to `CONTROLLER_ROOT` before deploying.
+- `deploy.sh` exports `JENKINS_CONTROLLER_URL` so `docker stack deploy` substitutes it from a sourced `.env`.
+- `stop.sh` sources `.env`, so a `STACK_NAME` set there is honoured.
+- `stop.sh` header comment now lists all four secrets.
+- README documents scale-down behaviour, credential rotation, HTTPS requirements and single-node limitations.
+
 ## 1.1.2 - 2026-06-11
 
 - Switch worker base image from `eclipse-temurin:21-jre-ubi10-minimal` to `ubuntu:24.04` with openjdk-21 and static Docker CLI
