@@ -41,7 +41,7 @@ flowchart TB
         direction LR
         GHA["Build & smoke test"]
         HUB["Docker Hub\njenkins-controller:tag\njenkins-worker:tag"]
-        GHA -->|push images| HUB
+        GHA -->|"eligible runs push images"| HUB
     end
 
     subgraph SWARM ["Single-node Docker Swarm"]
@@ -305,7 +305,7 @@ flowchart LR
         B1 --> B2 --> B3 --> B4 --> B5 --> B6 --> B7 --> B8
     end
 
-    B8 -->|"main or v* tag"| PUSH
+    B8 -->|"main, v* tag or manual run"| PUSH
 
     subgraph PUSH ["push-images"]
         P1["Load smoke-tested artifact"]
