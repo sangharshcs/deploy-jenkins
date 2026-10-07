@@ -136,6 +136,8 @@ Builds both images, creates Docker secrets, and deploys the stack.
 http://<JENKINS_SERVER_IP>:8080/jenkins
 ```
 
+> **The controller runs no builds.** The built-in node has 0 executors and is set to EXCLUSIVE mode. Unlabelled jobs run on any available Swarm worker (workers are Mode.NORMAL). Only jobs that explicitly target the built-in node — by setting their label expression to `built-in` — will wait in the queue with no executor. Existing jobs do not need a label change unless they already restrict themselves to the built-in node.
+
 > **HTTP is for isolated local demos only.** Credentials and the downloaded swarm-client JAR cross this connection unencrypted. `JENKINS_SERVER_IP=127.0.0.1` only sets the displayed URL and the workers' target; it does **not** bind Swarm's published port to loopback. The stack publishes port 8080 on the host. Restrict inbound access to that port at the host or network boundary and verify it is inaccessible from other machines. See [HTTPS](#https) for networked deployments.
 
 ---
@@ -376,10 +378,11 @@ flowchart LR
         B5["Assert admin /manage → 200"]
         B6["Assert agent /manage → 403"]
         B7["Assert worker UID ≠ 0"]
-        B1 --> B2 --> B3 --> B4 --> B5 --> B6 --> B7
+        B8["Assert Built-In Node executors = 0"]
+        B1 --> B2 --> B3 --> B4 --> B5 --> B6 --> B7 --> B8
     end
 
-    B7 -->|"main or v* tag"| PUSH
+    B8 -->|"main or v* tag"| PUSH
 
     subgraph PUSH ["push-images"]
         P1["Load smoke-tested artifact"]
@@ -413,6 +416,7 @@ The push job loads the exact images that passed the smoke test — it does not r
 | Secrets as source of truth | `security.groovy.override` runs on every container start and updates both accounts from mounted secrets |
 | Anonymous read disabled | Enforced in `security.groovy` |
 | CSRF protection | `DefaultCrumbIssuer(true)` set in `security.groovy` |
+| Controller runs no builds | The built-in node has 0 executors and is set to EXCLUSIVE mode. Jobs on the built-in node would run inside the controller container alongside `/run/secrets/jenkins-pass` and the full contents of `JENKINS_HOME`. Unlabelled jobs run on any available Swarm worker (workers are Mode.NORMAL). Only jobs that explicitly target the built-in node (label expression `built-in`) will wait in the queue with no executor; those jobs need a worker label instead. This does not stop a job on a worker from reading `/run/secrets/agent-pass` |
 | Worker runs as UID 10001 | The worker runs as a non-root `jenkins` user (UID/GID 10001). The Docker socket is **not** mounted by default. Non-root does not prevent a job from reading `/run/secrets/agent-pass` — the secret files are mode 0444 and readable by any user. To add packages, extend the image (see Worker startup). To run as root inside the container without host Docker access, add `user: root` to the worker service in `stack.yml` |
 | Docker socket opt-in | To enable Docker builds, add the socket mount to the worker service in `stack.yml`. Also add `user: root` — non-root gives no protection once the socket is mounted, since a process with socket access can start privileged containers and reach host paths regardless of its own UID. **This gives every build job full control of the host Docker daemon** — it can start privileged containers, read host paths, and reach any secret accessible to the Docker daemon, including the Jenkins home. The separate agent Jenkins account does not limit that access |
 | Controller placement | `node.role == manager` keeps the controller on a manager node. On a single-node Swarm this is always the only node. See [Single-node limitations](#single-node-limitations) for multi-node caveats |

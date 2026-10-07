@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.0 - 2026-10-07
+
+### Breaking
+
+- The built-in node now has 0 executors and is set to EXCLUSIVE mode. Unlabelled jobs run on any available Swarm worker (workers are Mode.NORMAL). Only jobs that explicitly target the built-in node (label expression set to `built-in`) will wait in the queue with no executor. Existing jobs do not need a label change unless they already restrict themselves to the built-in node.
+
+### Security
+
+- `security.groovy` now calls `setNumExecutors(0)` and `setMode(EXCLUSIVE)` on the Jenkins instance before saving, preventing any build from running on the built-in node. Previously the default of 2 executors applied, giving build jobs access to the admin secret and all of `JENKINS_HOME`.
+- CI smoke test now asserts the Built-In Node reports `numExecutors == 0` via the `/computer/api/json` endpoint.
+
 ## 1.3.0 - 2026-10-07
 
 ### Breaking
