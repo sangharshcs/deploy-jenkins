@@ -38,13 +38,28 @@ services:
       - SWARM_WEBSOCKET=${SWARM_WEBSOCKET:-true}
     # Each replica keeps its workspace in its own container filesystem.
     # Files are discarded when the replica is removed or replaced.
-    # For trusted Docker builds only, opt in to host Docker access by adding
-    # both settings below (they go together — socket access is root-equivalent
-    # on the host regardless of the container user, so there is no security
-    # benefit to keeping the container non-root once the socket is mounted):
+    #
+    # --- If build jobs need extra packages ---
+    # Extend the worker image instead of running as root at runtime:
+    #   FROM <your-worker-image>
+    #   USER root
+    #   RUN apt-get update && apt-get install -y --no-install-recommends <pkg> && rm -rf /var/lib/apt/lists/*
+    #   USER jenkins
+    #
+    # --- If a trusted setup needs container root WITHOUT host Docker access ---
+    # Add only:
+    # user: root
+    # This gives the container process root inside the container only; the host
+    # is unaffected as long as no privileged mounts are added.
+    #
+    # --- If the Docker socket is mounted (trusted builds only) ---
+    # Add both:
     # volumes:
     #   - "/var/run/docker.sock:/var/run/docker.sock"
     # user: root
+    # Non-root gives no protection once the socket is mounted — a process with
+    # socket access can start privileged containers and reach host paths
+    # regardless of its own UID.
     # WARNING: with this mount, any build job can control the host Docker
     # daemon, read host paths, and reach the controller's secrets. The agent
     # Jenkins account does not restrict that access.

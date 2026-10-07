@@ -4,7 +4,7 @@
 
 ### Breaking
 
-- The worker now runs as UID/GID 10001 (`jenkins` user) instead of root. Build jobs that install packages, write to system paths, or require root access will fail. Enable the Docker socket opt-in (`volumes` + `user: root` in `stack.yml`) to restore root access for trusted builds.
+- The worker now runs as UID/GID 10001 (`jenkins` user) instead of root. Build jobs that install packages, write to system paths, or require root access will fail. Options: (a) extend the worker image (`USER root` / install / `USER jenkins`) to bake in the packages you need; (b) add `user: root` to the worker service in `stack.yml` for container root without host Docker access; (c) add both the socket mount and `user: root` if Docker builds are needed (non-root gives no protection once the socket is mounted).
 - The Swarm client JAR path moved from `/opt/swarm-client.jar` to `/home/jenkins/swarm-client.jar`.
 
 ### Security

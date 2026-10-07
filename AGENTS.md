@@ -79,3 +79,4 @@ Run and verify:
 4. No secrets are printed in logs or committed to files.
 5. Agent account (`AGENT_USER`) cannot access `/manage` (expect 403).
 6. Admin account (`JENKINS_USER`) can access `/manage` (expect 200).
+7. Worker is not root: `docker exec $(docker ps -q -f name=jenkins_worker | head -1) id -u` must not print `0`.

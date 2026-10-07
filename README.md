@@ -172,9 +172,22 @@ sequenceDiagram
 
 Each worker replica keeps its workspace in its own container filesystem. Replicas cannot overwrite one another's workspace files, but those files are lost when a replica is removed or replaced. Publish build outputs as Jenkins artifacts or to external storage if they need to persist.
 
-**The worker container runs as UID 10001 (`jenkins`).** The Docker socket is **not** mounted by default. The Docker CLI is present in the image; to enable Docker builds, add both the socket mount and `user: root` described in `stack.yml`. See [Security](#security) for what that entails.
+**The worker container runs as UID 10001 (`jenkins`).** The Docker socket is **not** mounted by default. See [Security](#security) for opt-in options.
 
-Non-root does not prevent a build job from reading `/run/secrets/agent-pass` — the secret files are mode 0444 and readable by any user. Build jobs that install packages, write to system paths, or run tools that require root will fail unless the socket opt-in (which re-enables root) is enabled or the image is extended.
+Non-root does not prevent a build job from reading `/run/secrets/agent-pass` — the secret files are mode 0444 and readable by any user.
+
+**If build jobs need extra packages**, extend the worker image — do not run as root at runtime:
+
+```dockerfile
+FROM <your-worker-image>
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends <pkg> && rm -rf /var/lib/apt/lists/*
+USER jenkins
+```
+
+**If build jobs need to run as root inside the container** (without host Docker access), add `user: root` to the worker service in `stack.yml`. This affects the container process only; the host is unaffected as long as no privileged mounts are added.
+
+**If build jobs need to run Docker commands**, add both the socket mount and `user: root` to the worker service in `stack.yml`. Non-root gives no protection once the socket is mounted — a process with socket access can start privileged containers and reach host paths regardless of its own UID. See [Security](#security) for the full warning.
 
 ---
 
@@ -400,8 +413,8 @@ The push job loads the exact images that passed the smoke test — it does not r
 | Secrets as source of truth | `security.groovy.override` runs on every container start and updates both accounts from mounted secrets |
 | Anonymous read disabled | Enforced in `security.groovy` |
 | CSRF protection | `DefaultCrumbIssuer(true)` set in `security.groovy` |
-| Worker runs as UID 10001 | The worker runs as a non-root `jenkins` user (UID/GID 10001). The Docker socket is **not** mounted by default. Non-root does not prevent a job from reading `/run/secrets/agent-pass` — the secret files are mode 0444 and readable by any user |
-| Docker socket opt-in | To enable Docker builds, add both the socket mount **and** `user: root` shown in `stack.yml` (the two settings go together — socket access is root-equivalent on the host regardless of the container user). **This gives every build job full control of the host Docker daemon** — it can start privileged containers, read host paths, and reach any secret accessible to the Docker daemon, including the Jenkins home. The separate agent Jenkins account does not limit that access |
+| Worker runs as UID 10001 | The worker runs as a non-root `jenkins` user (UID/GID 10001). The Docker socket is **not** mounted by default. Non-root does not prevent a job from reading `/run/secrets/agent-pass` — the secret files are mode 0444 and readable by any user. To add packages, extend the image (see Worker startup). To run as root inside the container without host Docker access, add `user: root` to the worker service in `stack.yml` |
+| Docker socket opt-in | To enable Docker builds, add the socket mount to the worker service in `stack.yml`. Also add `user: root` — non-root gives no protection once the socket is mounted, since a process with socket access can start privileged containers and reach host paths regardless of its own UID. **This gives every build job full control of the host Docker daemon** — it can start privileged containers, read host paths, and reach any secret accessible to the Docker daemon, including the Jenkins home. The separate agent Jenkins account does not limit that access |
 | Controller placement | `node.role == manager` keeps the controller on a manager node. On a single-node Swarm this is always the only node. See [Single-node limitations](#single-node-limitations) for multi-node caveats |
 | Minimal plugin surface | Controller ships with `swarm` and `matrix-auth` only |
 | HTTP limitation | Default deployment is HTTP. Credentials and swarm-client JAR are unencrypted in transit. See [HTTPS](#https) for external proxy guidance |
