@@ -18,10 +18,15 @@ RUN set -eux; \
       ca-certificates && \
     curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_VERSION}.tgz" \
       | tar -xz --strip-components=1 -C /usr/local/bin docker/docker && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd -g 10001 jenkins && \
+    useradd -u 10001 -g jenkins -m -d /home/jenkins jenkins && \
+    mkdir -p /opt/worker_home && \
+    chown jenkins:jenkins /opt/worker_home
 
-# Runs as root to download the Swarm client into /opt at startup. Docker socket
-# access is opt-in; see README §Security before enabling it.
-COPY --chmod=750 start.sh /start.sh
+# Docker socket access is opt-in; see README §Security before enabling it.
+COPY --chown=jenkins:jenkins --chmod=750 start.sh /start.sh
+
+USER jenkins
 
 CMD ["/start.sh"]
