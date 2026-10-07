@@ -57,7 +57,7 @@ Optional:
 - Workers must never mount the admin secrets (`jenkins-user`, `jenkins-pass`).
 - Do not reintroduce `777` permissions on Jenkins home or worker root paths.
 - Do not add passwordless sudo (`NOPASSWD`) into container images.
-- Treat the Docker socket mount in `stack.yml` as high-risk: it grants host-level Docker control to every build job (worker runs as root).
+- Treat the Docker socket mount in `stack.yml` as high-risk: it grants host-level Docker control to every build job. When the socket is mounted, enable `user: root` as well — the two settings go together (socket access is root-equivalent on the host regardless of the container user).
 
 ## Safe change guidance
 

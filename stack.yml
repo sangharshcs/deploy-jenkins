@@ -38,12 +38,16 @@ services:
       - SWARM_WEBSOCKET=${SWARM_WEBSOCKET:-true}
     # Each replica keeps its workspace in its own container filesystem.
     # Files are discarded when the replica is removed or replaced.
-    # For trusted Docker builds only, opt in to host Docker access by adding:
+    # For trusted Docker builds only, opt in to host Docker access by adding
+    # both settings below (they go together — socket access is root-equivalent
+    # on the host regardless of the container user, so there is no security
+    # benefit to keeping the container non-root once the socket is mounted):
     # volumes:
     #   - "/var/run/docker.sock:/var/run/docker.sock"
-    # WARNING: workers run as root. With this mount, any build job can control
-    # the host Docker daemon, read host paths, and reach the controller's
-    # secrets. The agent Jenkins account does not restrict that access.
+    # user: root
+    # WARNING: with this mount, any build job can control the host Docker
+    # daemon, read host paths, and reach the controller's secrets. The agent
+    # Jenkins account does not restrict that access.
     secrets:
       # Workers receive only the dedicated agent account — never the admin secret.
       - agent-user
