@@ -18,8 +18,7 @@ if (!adminUser || !adminPass) { throw new IllegalStateException("Admin secrets (
 if (!agentUser || !agentPass) { throw new IllegalStateException("Agent secrets (agent-user / agent-pass) are empty") }
 if (adminUser == agentUser) { throw new IllegalStateException("agent-user and jenkins-user must be different accounts; using the same name collapses the intended account separation") }
 
-// Create or update each account so Docker secrets remain the authoritative
-// source of truth: a secret rotation followed by a container restart is enough.
+// Accounts are created or updated from the mounted secrets on every start.
 def realm = new HudsonPrivateSecurityRealm(false)
 [
   (adminUser): adminPass,
@@ -34,15 +33,7 @@ def realm = new HudsonPrivateSecurityRealm(false)
 }
 instance.setSecurityRealm(realm)
 
-// Matrix Authorization: admin gets full control.
-// Agent account is granted the permissions below, which cover Swarm plugin
-// registration and reconnection.  The agent cannot access job configuration,
-// credentials, or administration pages.
-//   Hudson.READ      – required for any authenticated REST/UI call
-//   Computer.CREATE  – register a new (previously unknown) agent node
-//   Computer.CONNECT – connect or reconnect an agent node
-//   Computer.DISCONNECT – gracefully disconnect on shutdown
-//   Computer.BUILD   – allow executors to be started on this node
+// Admin: full control. Agent: read, plus the computer permissions the Swarm plugin uses.
 def strategy = new GlobalMatrixAuthorizationStrategy()
 strategy.add(Jenkins.ADMINISTER, adminUser)
 strategy.add(hudson.model.Hudson.READ, agentUser)
@@ -54,10 +45,7 @@ strategy.add(Computer.BUILD,      agentUser)
 instance.setAuthorizationStrategy(strategy)
 instance.setCrumbIssuer(new DefaultCrumbIssuer(true))
 
-// Jobs on the built-in node run inside the controller container where the
-// admin secret (/run/secrets/jenkins-pass) and all of JENKINS_HOME — including
-// secret.key, secrets/, users/, and jobs/ — are reachable by the build process.
-// Zero executors forces every build onto a labelled worker instead.
+// No builds on the built-in node: it runs next to the admin secret and JENKINS_HOME.
 instance.setNumExecutors(0)
 instance.setMode(hudson.model.Node.Mode.EXCLUSIVE)
 instance.save()

@@ -1,15 +1,7 @@
 #!/usr/bin/env bash
 # Usage: ./scripts/deploy.sh [--skip-build]
-#
-# Required env vars (or set in .env):
-#   JENKINS_SERVER_IP, JENKINS_USER, JENKINS_PASS, AGENT_USER, AGENT_PASS
-#
-# Optional: CONTROLLER_IMAGE, WORKER_IMAGE, DEPLOY_TAG, UI_PORT,
-#           CONTROLLER_ROOT, WORKER_ROOT, WORKER_REPLICAS, SWARM_EXECUTORS,
-#           SWARM_LABELS, SWARM_WEBSOCKET, STACK_NAME,
-#           JENKINS_CONTROLLER_URL (override the URL workers use to reach the
-#             controller; set this when TLS terminates on an external proxy at
-#             a different host or port, e.g. https://jenkins.example.com/jenkins)
+# Reads .env if present. Required: JENKINS_SERVER_IP, JENKINS_USER, JENKINS_PASS,
+# AGENT_USER, AGENT_PASS. Optional variables are listed in the README.
 
 set -euo pipefail
 
@@ -17,12 +9,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Values with spaces must be quoted in .env (e.g. SWARM_LABELS="swarm docker")
 [[ -f "${ROOT_DIR}/.env" ]] && source "${ROOT_DIR}/.env"
 
-# Validate required vars before any substitution that dereferences them
 for var in JENKINS_SERVER_IP JENKINS_USER JENKINS_PASS AGENT_USER AGENT_PASS; do
   [[ -z "${!var:-}" ]] && { echo "Missing required env var: ${var}" >&2; exit 1; }
 done
-
-[[ -n "${ROTATE_SECRETS:-}" ]] && echo "WARN: ROTATE_SECRETS is no longer supported. See README §Credential rotation." >&2
 
 if [[ "${AGENT_USER}" == "${JENKINS_USER}" ]]; then
   echo "ERROR: AGENT_USER and JENKINS_USER must be different accounts." >&2
@@ -39,18 +28,19 @@ export UI_PORT="${UI_PORT:-8080}"
 export CONTROLLER_ROOT="${CONTROLLER_ROOT:-/opt/jenkins_home}"
 export WORKER_ROOT="${WORKER_ROOT:-/opt/worker_home}"
 export WORKER_REPLICAS="${WORKER_REPLICAS:-1}"
+export SWARM_EXECUTORS="${SWARM_EXECUTORS:-5}"
+export SWARM_LABELS="${SWARM_LABELS:-swarm docker}"
+export SWARM_WEBSOCKET="${SWARM_WEBSOCKET:-true}"
 STACK_NAME="${STACK_NAME:-jenkins}"
 
-# Derive the URL workers use to reach the controller.
-# If JENKINS_CONTROLLER_URL is already set (e.g. for an external HTTPS proxy),
-# use it as-is.  Do not silently construct https://host:8080 when TLS terminates
-# elsewhere on a different port.
+# URL the workers use to reach the controller. Set JENKINS_CONTROLLER_URL yourself
+# (for example an https proxy URL); otherwise it is built from JENKINS_SERVER_IP and UI_PORT.
 if [[ -z "${JENKINS_CONTROLLER_URL:-}" ]]; then
   AGENT_HOST="${JENKINS_SERVER_IP}"
   [[ "${JENKINS_SERVER_IP}" == "127.0.0.1" || "${JENKINS_SERVER_IP}" == "localhost" ]] && AGENT_HOST="host.docker.internal"
   JENKINS_CONTROLLER_URL="http://${AGENT_HOST}:${UI_PORT}/jenkins"
 fi
-# Must be exported so docker stack deploy can substitute it into stack.yml.
+# Exported so docker stack deploy can substitute it into stack.yml.
 export JENKINS_CONTROLLER_URL
 JENKINS_BASE_URL="http://${JENKINS_SERVER_IP}:${UI_PORT}"
 
@@ -66,18 +56,10 @@ if [[ "${1:-}" != "--skip-build" ]]; then
   docker build -t "${WORKER_IMAGE}" "${ROOT_DIR}/worker"
 fi
 
-# The controller persists on the host. Worker workspaces stay inside their
-# individual containers so replicas cannot write to the same host directory.
 mkdir -p "${CONTROLLER_ROOT}"
 chmod 750 "${CONTROLLER_ROOT}"
 
-# Verify Jenkins (UID 1000) can write to the controller home before deploying.
-# chmod 750 on a directory owned by another user leaves UID 1000 with no write
-# access on a native Linux Docker host.  We test using the actual controller
-# image so the check reflects the real runtime user.
-# Note: Docker Desktop (macOS/Windows) with VirtioFS bypasses host permission
-# enforcement — the check always passes there, consistent with the container
-# also being able to write at runtime.
+# Check that Jenkins (UID 1000) can write to CONTROLLER_ROOT, using the controller image.
 if ! docker run --rm --user 1000:1000 \
     --entrypoint sh \
     -v "${CONTROLLER_ROOT}:/var/jenkins_home" \
@@ -86,13 +68,10 @@ if ! docker run --rm --user 1000:1000 \
   echo "ERROR: Jenkins (UID 1000) cannot write to CONTROLLER_ROOT=${CONTROLLER_ROOT}." >&2
   echo "       Make the directory writable by UID 1000 before deploying:" >&2
   echo "         sudo chown 1000 \"${CONTROLLER_ROOT}\"" >&2
-  echo "       Avoid chown -R on an existing Jenkins home — it may corrupt" >&2
-  echo "       files owned by other UIDs inside the volume." >&2
   exit 1
 fi
 
-# Create secrets if they don't exist.
-# To rotate a secret: run stop.sh first (which removes secrets), then deploy.sh.
+# Secrets are created only if missing. To change them, run stop.sh and deploy again (see README).
 for secret in jenkins-user jenkins-pass agent-user agent-pass; do
   if ! docker secret inspect "${secret}" >/dev/null 2>&1; then
     case "${secret}" in
