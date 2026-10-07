@@ -43,7 +43,7 @@ services:
       - agent-pass
     deploy:
       replicas: ${WORKER_REPLICAS:-1}
-      # 10 retries x 10s is about 100s; a slower controller start can exhaust it (see README).
+      # Up to 10 failed restart attempts, 10s apart. Not a fixed controller startup deadline (see README).
       restart_policy:
         condition: on-failure
         delay: 10s
