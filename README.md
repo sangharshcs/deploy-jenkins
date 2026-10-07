@@ -189,7 +189,7 @@ docker service scale jenkins_worker=1
 docker service scale jenkins_worker=0
 ```
 
-**Scale-down behaviour:** when Docker Swarm stops a replica, the `swarm-client` process receives SIGTERM and calls the Jenkins disconnect API before exiting. In an idle-worker test (5 replicas scaled to 1, no active builds), the removed workers appeared as offline nodes in the Jenkins node list immediately after the scale command. Whether those offline entries are eventually cleaned up by Jenkins — and how quickly — was not recorded; the available screenshot is a single point in time. Do not treat an offline entry as permanent.
+**Scale-down behaviour:** when Docker Swarm stops a replica, the `swarm-client` process receives SIGTERM and should call the Jenkins disconnect API before exiting (not yet confirmed in the logs). In an idle-worker test (5 replicas scaled to 1, no active builds), the removed workers appeared as offline nodes in the Jenkins node list immediately after the scale command. Whether those offline entries are eventually cleaned up by Jenkins — and how quickly — was not recorded; the available screenshot is a single point in time. Do not treat an offline entry as permanent.
 
 If a build is running on the stopped replica when SIGTERM arrives, the build may be marked as failed or aborted. **This scenario has not been tested.** Scale down one replica at a time and verify the node is idle before reducing capacity if build continuity matters. See [Testing scale-down with an active build](#testing-scale-down-with-an-active-build) for a reproducible test procedure.
 
