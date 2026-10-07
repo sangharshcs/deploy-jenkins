@@ -53,4 +53,11 @@ strategy.add(Computer.BUILD,      agentUser)
 
 instance.setAuthorizationStrategy(strategy)
 instance.setCrumbIssuer(new DefaultCrumbIssuer(true))
+
+// Jobs on the built-in node run inside the controller container where the
+// admin secret (/run/secrets/jenkins-pass) and all of JENKINS_HOME — including
+// secret.key, secrets/, users/, and jobs/ — are reachable by the build process.
+// Zero executors forces every build onto a labelled worker instead.
+instance.setNumExecutors(0)
+instance.setMode(hudson.model.Node.Mode.EXCLUSIVE)
 instance.save()

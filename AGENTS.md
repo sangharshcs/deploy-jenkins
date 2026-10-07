@@ -58,6 +58,7 @@ Optional:
 - Do not reintroduce `777` permissions on Jenkins home or worker root paths.
 - Do not add passwordless sudo (`NOPASSWD`) into container images.
 - Treat the Docker socket mount in `stack.yml` as high-risk: it grants host-level Docker control to every build job. When the socket is mounted, enable `user: root` as well — the two settings go together (socket access is root-equivalent on the host regardless of the container user).
+- The built-in node must keep 0 executors. Jobs on the built-in node run inside the controller container where the admin secret and all of `JENKINS_HOME` are reachable by the build process.
 
 ## Safe change guidance
 
@@ -80,3 +81,4 @@ Run and verify:
 5. Agent account (`AGENT_USER`) cannot access `/manage` (expect 403).
 6. Admin account (`JENKINS_USER`) can access `/manage` (expect 200).
 7. Worker is not root: `docker exec $(docker ps -q -f name=jenkins_worker | head -1) id -u` must not print `0`.
+8. Built-in node has 0 executors: in the Jenkins Script Console run `Jenkins.get().numExecutors` — it must print `0`.
