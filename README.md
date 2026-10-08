@@ -63,7 +63,7 @@ flowchart TB
         WN -->|"agent account (WebSocket)"| JC
     end
 
-    HUB -->|pull on deploy| SWARM
+    HUB -.->|"optional: registry-based deployment"| SWARM
 
     ADMIN_SECRETS["Admin secrets\njenkins-user · jenkins-pass"]
     AGENT_SECRETS["Agent secrets\nagent-user · agent-pass"]
@@ -314,7 +314,7 @@ flowchart LR
     end
 ```
 
-Images are published when a push to `main` or a `v*` tag happens, or when the workflow is run manually (`workflow_dispatch`, from any branch). Pull requests run only the smoke test. The push job loads the images that passed the smoke test; it does not rebuild them.
+Images are published when a push to `main` or a `v*` tag happens, or when the workflow is run manually (`workflow_dispatch`, from any branch). Pull requests build and smoke-test both images but do not publish them. The push job loads the images that passed the smoke test; it does not rebuild them.
 
 CI does not test a Swarm deployment, scale-down or HTTPS. The smoke test uses plain `docker run` containers on a bridge network.
 
