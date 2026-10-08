@@ -26,7 +26,7 @@ Adding a Jenkins build node by hand means going through **Manage Jenkins → Nod
 The [Jenkins Swarm Plugin](https://plugins.jenkins.io/swarm/) lets workers connect *to* the controller (WebSocket needs plugin 3.22 or later). With Docker Swarm replicas, adding capacity is one command:
 
 ```bash
-docker service scale jenkins_worker=10
+docker service scale jenkins_worker=5
 ```
 
 This repo has two Docker images, four Docker secrets, one stack file and a deploy script.
